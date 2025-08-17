@@ -1,5 +1,5 @@
-% Lightning-Fast RF Fingerprinting - Extreme Speed Optimization
-% Target: <2 minutes training, >98% accuracy, <0.1 loss
+% Lightning-Fast RF Fingerprinting with Comprehensive Visualizations
+% Target: <2 minutes training, >98% accuracy, <0.1 loss, Full Plots
 % MATLAB R2023b Compatible
 
 % k value will be used to multiply the number of transmitters
@@ -29,7 +29,7 @@ for localSNR = SNRList
                 end
             end
 
-            fprintf('⚡ Lightning Processing: SNR=%d, Frames=%d, k=%d\n', localSNR, localFramesPerRouter, k);
+            fprintf('⚡ Lightning Processing with Plots: SNR=%d, Frames=%d, k=%d\n', localSNR, localFramesPerRouter, k);
 
             numKnownRouters = originalNumKnownRouters * k;
             numUnknownRouters = originalNumUnknownRouters * k;
@@ -111,7 +111,7 @@ for localSNR = SNRList
             tic
             generatedMACAddresses = strings(numTotalRouters, 1);
 
-            %% Parallel data generation (optimized)
+            %% Parallel data generation
             spmd
                 routerIndices = spmdIndex:spmdSize:numTotalRouters;
 
@@ -213,15 +213,15 @@ for localSNR = SNRList
             yVal = repelem(labels, numValidationFramesPerRouter);
             yTest = repelem(labels, numTestFramesPerRouter);
 
-            %% Lightning-Fast Feature Engineering (Optimized)
-            fprintf('⚡ Lightning feature engineering...\n');
+            %% Lightning-Fast Feature Engineering with Visualization
+            fprintf('⚡ Lightning feature engineering with visualization...\n');
             
             % Pre-compute complex data once
             xTrainComplex = complex(real(xTrainingFrames(:)), imag(xTrainingFrames(:)));
             xValComplex = complex(real(xValFrames(:)), imag(xValFrames(:)));
             xTestComplex = complex(real(xTestFrames(:)), imag(xTestFrames(:)));
             
-            % Extract only the most discriminative features (reduced to 6 channels for speed)
+            % Extract 6 discriminative features
             xTrainFeatures = [
                 real(xTrainComplex), imag(xTrainComplex), ...              % Real, Imaginary
                 abs(xTrainComplex), angle(xTrainComplex), ...              % Magnitude, Phase
@@ -243,10 +243,32 @@ for localSNR = SNRList
                 unwrap(angle(xTestComplex))
             ];
 
-            % Fast normalization (range is faster than zscore)
+            % Fast normalization
             xTrainFeatures = normalize(xTrainFeatures, 'range');
             xValFeatures = normalize(xValFeatures, 'range');
             xTestFeatures = normalize(xTestFeatures, 'range');
+
+            %% Feature Visualization
+            fprintf('📊 Creating feature visualization...\n');
+            figure('Position', [50, 50, 1200, 800], 'Name', 'Feature Analysis');
+            
+            % Select samples from first few routers for visualization
+            sampleSize = min(1000, size(xTrainFeatures, 1));
+            sampleIdx = randperm(size(xTrainFeatures, 1), sampleSize);
+            
+            featureNames = {'Real', 'Imaginary', 'Magnitude', 'Phase', 'Power', 'Unwrapped Phase'};
+            
+            for i = 1:6
+                subplot(2, 3, i);
+                histogram(xTrainFeatures(sampleIdx, i), 50, 'Normalization', 'probability');
+                title(sprintf('Feature %d: %s', i, featureNames{i}));
+                xlabel('Normalized Value');
+                ylabel('Probability');
+                grid on;
+            end
+            
+            sgtitle(sprintf('Feature Distribution Analysis - SNR:%ddB, Frames:%d', SNR, localFramesPerRouter));
+            saveas(gcf, sprintf('Feature_Analysis_%d_SNR_%d_Frame_%d.png', numTotalRouters, SNR, localFramesPerRouter));
 
             % Reshape for CNN: [Height, Width, Channels, Samples] - 6 channels
             xTrainingFrames = permute(...
@@ -270,14 +292,14 @@ for localSNR = SNRList
             yTest = categorical(yTest);
 
             %% Lightning-Fast Ultra-Compact Model
-            fprintf('⚡ Building lightning-fast model...\n');
+            fprintf('⚡ Building lightning-fast model with visualization...\n');
             inputSize = [frameLength 6 1];  % 6-channel for speed
             numClasses = numKnownRouters + 1;
 
             % Extremely streamlined architecture for maximum speed
             layers = [
                 % Input
-                imageInputLayer(inputSize, 'Normalization', 'none', 'Name', 'Input')  % No normalization for speed
+                imageInputLayer(inputSize, 'Normalization', 'none', 'Name', 'Input')
                 
                 % Single powerful conv layer
                 convolution2dLayer([11 6], 256, 'Stride', [3 1], 'Padding', 'same', 'Name', 'Conv1')
@@ -304,7 +326,7 @@ for localSNR = SNRList
                 % Minimal FC layers
                 fullyConnectedLayer(256, 'Name', 'FC1')
                 leakyReluLayer(0.1, 'Name', 'LRFC1')
-                dropoutLayer(0.2, 'Name', 'Drop1')  % Minimal dropout
+                dropoutLayer(0.2, 'Name', 'Drop1')
                 
                 % Direct to output
                 fullyConnectedLayer(numClasses, 'Name', 'FCFinal')
@@ -316,87 +338,118 @@ for localSNR = SNRList
             lgraph = layerGraph(layers);
             lgraph = connectLayers(lgraph, 'MaxPool1', 'ResAdd/in2');  % Skip connection
 
-            % Lightning-fast training options
+            %% Model Architecture Visualization
+            fprintf('🏗️ Visualizing model architecture...\n');
+            figure('Position', [100, 100, 1000, 600], 'Name', 'Model Architecture');
+            plot(lgraph);
+            title(sprintf('Lightning-Fast CNN-ResNet Architecture\n%d classes, 6-channel input', numClasses));
+            saveas(gcf, sprintf('Model_Architecture_%d_SNR_%d_Frame_%d.png', numTotalRouters, SNR, localFramesPerRouter));
+
+            % Lightning-fast training options with full visualization
             miniBatchSize = 256;  % Maximum batch size for speed
             iterPerEpoch = ceil(numTrainingFramesPerRouter*numTotalRouters/miniBatchSize);
 
             options = trainingOptions('adam', ...
                 'MaxEpochs', 8, ...               % Minimal epochs
                 'ValidationData', {xValFrames, yVal}, ...
-                'ValidationFrequency', iterPerEpoch, ...  % Validate only once per epoch
-                'Verbose', false, ...
+                'ValidationFrequency', iterPerEpoch, ...  % Validate once per epoch
+                'Verbose', true, ...              % 显示详细信息
                 'InitialLearnRate', 0.02, ...     % Very high learning rate
                 'LearnRateSchedule', 'piecewise', ...
                 'LearnRateDropFactor', 0.2, ...
                 'LearnRateDropPeriod', 3, ...
                 'MiniBatchSize', miniBatchSize, ...
-                'Plots', 'training-progress', ... % 恢复训练过程可视化
+                'Plots', 'training-progress', ... % 显示训练进度图
                 'Shuffle', 'once', ...            % Shuffle only once
                 'L2Regularization', 0.001, ...    % Minimal regularization
                 'GradientThreshold', 1, ...
                 'ValidationPatience', 2, ...      % Very early stopping
                 'ExecutionEnvironment', 'cpu');
 
-            % Lightning-fast training
-            fprintf('⚡ Starting lightning training...\n');
+            % Lightning-fast training with visualization
+            fprintf('⚡ Starting lightning training with full visualization...\n');
             tic
             simNet = trainNetwork(xTrainingFrames, yTrain, lgraph, options);
             TrainTime = toc;
             fprintf('⚡ Training completed: %.1fs\n', TrainTime);
 
-            %% Lightning evaluation
-            fprintf('⚡ Lightning evaluation...\n');
+            %% Comprehensive Evaluation and Visualization
+            fprintf('📊 Comprehensive evaluation with visualization...\n');
             yTestPred = classify(simNet, xTestFrames, 'ExecutionEnvironment', 'cpu');
             testAccuracy = mean(yTest == yTestPred);
             
-            % Fast loss calculation
+            % Calculate loss
             testProbs = predict(simNet, xTestFrames, 'ExecutionEnvironment', 'cpu');
             yTestOneHot = full(ind2vec(double(yTest)'))';
             testLoss = -mean(sum(yTestOneHot .* log(testProbs + 1e-8), 2));
             
             fprintf('⚡ Test Accuracy: %.2f%%\n', testAccuracy*100);
             fprintf('⚡ Test Loss: %.4f\n', testLoss);
-            
-            % Quick confusion matrix
-            figure('Position', [100, 100, 800, 600]);
+
+            %% Enhanced Confusion Matrix
+            figure('Position', [200, 100, 1000, 800], 'Name', 'Confusion Matrix Analysis');
             cm = confusionchart(yTest, yTestPred);
-            cm.Title = sprintf('Lightning-Fast Model\nSNR:%ddB, Frames:%d, Acc:%.2f%%, Loss:%.3f, Time:%.1fs', ...
+            cm.Title = sprintf('Lightning-Fast Model Performance\nSNR:%ddB, Frames:%d, Acc:%.2f%%, Loss:%.3f, Time:%.1fs', ...
                 SNR, localFramesPerRouter, testAccuracy*100, testLoss, TrainTime);
             cm.RowSummary = 'row-normalized';
+            cm.ColumnSummary = 'column-normalized';
             
             confusionFileName = sprintf('Lightning_Confusion_%d_SNR_%d_Frame_%d', ...
                 numTotalRouters, SNR, localFramesPerRouter);
             saveas(gcf, confusionFileName, 'png');
 
-            %% Lightning statistical evaluation
-            fprintf('⚡ Lightning statistics (10 tests)...\n');
-            numTests = 10;  % Minimal tests for speed
+            %% Statistical Analysis with Visualization
+            fprintf('📈 Statistical analysis with visualization...\n');
+            numTests = 15;  % Balanced number for speed vs accuracy
             accuracies = zeros(numTests, 1);
             losses = zeros(numTests, 1);
 
             for i = 1:numTests
-                % Ultra-fast subset testing
+                % Fast subset testing
                 idx = randperm(numel(yTest));
-                subsetSize = min(500, numel(yTest));  % Very small subset
+                subsetSize = min(800, numel(yTest));
                 xTestShuffled = xTestFrames(:,:,:,idx(1:subsetSize));
                 yTestShuffled = yTest(idx(1:subsetSize));
                 
                 yPred = classify(simNet, xTestShuffled, 'ExecutionEnvironment', 'cpu');
                 accuracies(i) = mean(yTestShuffled == yPred);
                 
-                % Fast loss calculation
+                % Calculate loss
                 probs = predict(simNet, xTestShuffled, 'ExecutionEnvironment', 'cpu');
                 yOneHot = full(ind2vec(double(yTestShuffled)'))';
                 losses(i) = -mean(sum(yOneHot .* log(probs + 1e-8), 2));
             end
 
-            % Final statistics
+            % Performance statistics
             avgAccuracy = mean(accuracies);
             stdAccuracy = std(accuracies);
             avgLoss = mean(losses);
             stdLoss = std(losses);
+
+            %% Performance Visualization
+            figure('Position', [300, 100, 1200, 500], 'Name', 'Performance Analysis');
             
-            fprintf('\n⚡ ======== LIGHTNING-FAST RESULTS ========\n');
+            subplot(1, 2, 1);
+            histogram(accuracies*100, 10, 'FaceColor', 'blue', 'Alpha', 0.7);
+            title('Accuracy Distribution');
+            xlabel('Accuracy (%)');
+            ylabel('Frequency');
+            xline(avgAccuracy*100, 'r--', 'LineWidth', 2, 'Label', sprintf('Mean: %.1f%%', avgAccuracy*100));
+            grid on;
+            
+            subplot(1, 2, 2);
+            histogram(losses, 10, 'FaceColor', 'red', 'Alpha', 0.7);
+            title('Loss Distribution');
+            xlabel('Loss');
+            ylabel('Frequency');
+            xline(avgLoss, 'r--', 'LineWidth', 2, 'Label', sprintf('Mean: %.3f', avgLoss));
+            grid on;
+            
+            sgtitle(sprintf('Performance Statistics - %d Tests', numTests));
+            saveas(gcf, sprintf('Performance_Stats_%d_SNR_%d_Frame_%d.png', numTotalRouters, SNR, localFramesPerRouter));
+            
+            %% Results Summary
+            fprintf('\n⚡ ======== LIGHTNING-FAST RESULTS WITH PLOTS ========\n');
             fprintf('⚡ Training Time:       %.1f seconds\n', TrainTime);
             fprintf('⚡ Data Generation:     %.1f seconds\n', GenerateTime);
             fprintf('⚡ Total Time:          %.1f seconds\n', TrainTime + GenerateTime);
@@ -405,6 +458,7 @@ for localSNR = SNRList
             fprintf('🔢 Model Features:      6-channel input, %d classes\n', numClasses);
             fprintf('💾 Total Routers:       %d (%d known + %d unknown)\n', ...
                 numTotalRouters, numKnownRouters, numUnknownRouters);
+            fprintf('📊 Visualizations:      Training plot + Confusion matrix + Feature analysis + Performance stats\n');
             
             % Performance assessment
             if avgAccuracy >= 0.98 && avgLoss <= 0.1 && TrainTime <= 120
@@ -417,10 +471,10 @@ for localSNR = SNRList
                 fprintf('⚠️  Performance check: Acc=%.1f%%, Loss=%.3f, Time=%.1fs\n', ...
                     avgAccuracy*100, avgLoss, TrainTime);
             end
-            fprintf('==========================================\n\n');
+            fprintf('====================================================\n\n');
 
-            %% Save lightning results
-            resultsFileName = sprintf('Lightning_Results_%d_SNR_%d_Frame_%d.mat', ...
+            %% Save comprehensive results
+            resultsFileName = sprintf('Lightning_WithPlots_Results_%d_SNR_%d_Frame_%d.mat', ...
                 numTotalRouters, SNR, localFramesPerRouter);
             
             save(resultsFileName, ...
@@ -431,18 +485,18 @@ for localSNR = SNRList
                 'SNR', 'localFramesPerRouter', 'numClasses', 'frameLength', ...
                 'miniBatchSize', 'inputSize');
             
-            fprintf('⚡ Results saved: %s\n', resultsFileName);
+            fprintf('💾 Results saved: %s\n', resultsFileName);
             
             % Save lightning network
-            networkFileName = sprintf('Lightning_Network_%d_SNR_%d_Frame_%d.mat', ...
+            networkFileName = sprintf('Lightning_WithPlots_Network_%d_SNR_%d_Frame_%d.mat', ...
                 numTotalRouters, SNR, localFramesPerRouter);
             save(networkFileName, 'simNet', 'lgraph', 'inputSize', 'numClasses', 'options');
-            fprintf('⚡ Network saved: %s\n\n', networkFileName);
+            fprintf('🧠 Network saved: %s\n\n', networkFileName);
         end
     end
 end
 
-fprintf('⚡🏆 Lightning-fast processing completed!\n');
+fprintf('⚡🎨 Lightning-fast processing with full visualizations completed!\n');
 
 %% Lightning Helper Functions
 
