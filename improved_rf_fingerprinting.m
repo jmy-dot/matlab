@@ -234,82 +234,82 @@ for localSNR = SNRList
 
             %% Enhanced Hybrid CNN-ResNet-Attention-LSTM Model
             inputSize = [frameLength 2 1]; 
-            numClasses = numKnownRouters + 1; 
+            numClasses = numKnownRouters + 1;
+
+            % Create layer graph and fix skip connections
+            lgraph = layerGraph();
             
-            % Define enhanced hybrid model layers
-            layers = [
-                % Input layer
+            % Add input and initial CNN layers
+            lgraph = addLayers(lgraph, [
                 imageInputLayer(inputSize, 'Normalization', 'zscore', 'Name', 'Input')
-                
-                % Initial CNN feature extraction
                 convolution2dLayer([7 2], 64, 'Stride', [2 1], 'Padding', 'same', 'Name', 'Conv1')
                 batchNormalizationLayer('Name', 'BN1')
                 reluLayer('Name', 'ReLU1')
                 maxPooling2dLayer([3 1], 'Stride', [2 1], 'Padding', 'same', 'Name', 'MaxPool1')
-                
-                % ResNet Block 1
+            ]);
+            
+            % Add ResNet Block 1
+            lgraph = addLayers(lgraph, [
                 convolution2dLayer([3 1], 64, 'Padding', 'same', 'Name', 'ResConv1_1')
                 batchNormalizationLayer('Name', 'ResBN1_1')
                 reluLayer('Name', 'ResReLU1_1')
                 convolution2dLayer([3 1], 64, 'Padding', 'same', 'Name', 'ResConv1_2')
                 batchNormalizationLayer('Name', 'ResBN1_2')
-                additionLayer(2, 'Name', 'ResAdd1')
-                reluLayer('Name', 'ResReLU1_2')
-                
-                % ResNet Block 2 with increased channels
+            ]);
+            
+            % Add addition layer for ResNet Block 1
+            lgraph = addLayers(lgraph, additionLayer(2, 'Name', 'ResAdd1'));
+            lgraph = addLayers(lgraph, reluLayer('Name', 'ResReLU1_2'));
+            
+            % Add ResNet Block 2 main path
+            lgraph = addLayers(lgraph, [
                 convolution2dLayer([3 1], 128, 'Stride', [2 1], 'Padding', 'same', 'Name', 'ResConv2_1')
                 batchNormalizationLayer('Name', 'ResBN2_1')
                 reluLayer('Name', 'ResReLU2_1')
                 convolution2dLayer([3 1], 128, 'Padding', 'same', 'Name', 'ResConv2_2')
                 batchNormalizationLayer('Name', 'ResBN2_2')
-                
-                % Skip connection for ResNet Block 2
+            ]);
+            
+            % Add skip connection for ResNet Block 2
+            lgraph = addLayers(lgraph, [
                 convolution2dLayer([1 1], 128, 'Stride', [2 1], 'Name', 'ResSkip2')
                 batchNormalizationLayer('Name', 'ResSkipBN2')
-                
-                additionLayer(2, 'Name', 'ResAdd2')
-                reluLayer('Name', 'ResReLU2_2')
-                
-                % Global Average Pooling for dimension reduction
+            ]);
+            
+            % Add addition layer for ResNet Block 2
+            lgraph = addLayers(lgraph, additionLayer(2, 'Name', 'ResAdd2'));
+            lgraph = addLayers(lgraph, reluLayer('Name', 'ResReLU2_2'));
+            
+            % Add remaining layers
+            lgraph = addLayers(lgraph, [
                 globalAveragePooling2dLayer('Name', 'GAP')
-                
-                % Reshape for sequence processing
                 sequenceUnfoldingLayer('Name', 'SeqUnfold')
                 flattenLayer('Name', 'Flatten')
-                
-                % Self-Attention mechanism (approximated with FC layers and element-wise operations)
-                fullyConnectedLayer(256, 'Name', 'AttentionQuery')
-                fullyConnectedLayer(256, 'Name', 'AttentionKey')
-                fullyConnectedLayer(256, 'Name', 'AttentionValue')
-                
-                % Attention weights computation (simplified)
-                softmaxLayer('Name', 'AttentionWeights')
-                
-                % LSTM layers for temporal modeling
+                fullyConnectedLayer(256, 'Name', 'AttentionFC')
                 lstmLayer(128, 'OutputMode', 'sequence', 'Name', 'LSTM1')
                 dropoutLayer(0.3, 'Name', 'Dropout1')
-                
                 lstmLayer(64, 'OutputMode', 'last', 'Name', 'LSTM2')
                 dropoutLayer(0.3, 'Name', 'Dropout2')
-                
-                % Final classification layers
                 fullyConnectedLayer(128, 'Name', 'FC1')
                 reluLayer('Name', 'FinalReLU')
                 dropoutLayer(0.5, 'Name', 'FinalDropout')
                 fullyConnectedLayer(numClasses, 'Name', 'FC2')
                 softmaxLayer('Name', 'SoftMax')
                 classificationLayer('Name', 'Output')
-            ];
-
-            % Create layer graph for skip connections
-            lgraph = layerGraph(layers);
+            ]);
             
-            % Add skip connection for ResNet Block 1
+            % Connect the layers
+            lgraph = connectLayers(lgraph, 'MaxPool1', 'ResConv1_1');
             lgraph = connectLayers(lgraph, 'MaxPool1', 'ResAdd1/in2');
+            lgraph = connectLayers(lgraph, 'ResBN1_2', 'ResAdd1/in1');
+            lgraph = connectLayers(lgraph, 'ResAdd1', 'ResReLU1_2');
             
-            % Add skip connection for ResNet Block 2
+            lgraph = connectLayers(lgraph, 'ResReLU1_2', 'ResConv2_1');
             lgraph = connectLayers(lgraph, 'ResReLU1_2', 'ResSkip2');
+            lgraph = connectLayers(lgraph, 'ResBN2_2', 'ResAdd2/in1');
             lgraph = connectLayers(lgraph, 'ResSkipBN2', 'ResAdd2/in2');
+            lgraph = connectLayers(lgraph, 'ResAdd2', 'ResReLU2_2');
+            lgraph = connectLayers(lgraph, 'ResReLU2_2', 'GAP');
 
             % Training options with optimized hyperparameters
             miniBatchSize = 256;  % Reduced for better gradient estimates
