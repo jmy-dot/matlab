@@ -80,6 +80,90 @@ classdef TemporalSelfAttentionLayer < nnet.layer.Layer
                 Z = O;
             end
         end
+
+        function [dLdX, dLdWq, dLdbq, dLdWk, dLdbk, dLdWv, dLdbv, dLdWo, dLdbo] = backward(layer, X, Z, dLdZ, ~)
+            % X:   [C x T x B]
+            % Z:   [C x T x B]
+            % dLdZ:[C x T x B]
+            % Returns gradients w.r.t. input X and learnable params
+
+            [channels, timeSteps, batchSize] = size(X);
+            U = layer.NumUnits;
+
+            % Forward recomputation of projections (needed for grads)
+            X2 = reshape(X, channels, []); % [C x (T*B)]
+            Q = layer.Wq * X2 + layer.bq; % [U x (T*B)]
+            K = layer.Wk * X2 + layer.bk; % [U x (T*B)]
+            V = layer.Wv * X2 + layer.bv; % [U x (T*B)]
+            Q = reshape(Q, U, timeSteps, batchSize);
+            K = reshape(K, U, timeSteps, batchSize);
+            V = reshape(V, U, timeSteps, batchSize);
+
+            % Compute weights as in predict for consistency
+            Qt = permute(Q, [2 1 3]); % [T x U x B]
+            scores = pagemtimes(Qt, K) ./ sqrt(U); % [T x T x B]
+            scores = scores - max(scores, [], 2);
+            weights = exp(scores);
+            weights = weights ./ (sum(weights, 2) + eps);
+
+            % Gradient starts at Z = O + X -> dLdO = dLdZ, dLdX accumulates dLdZ (residual)
+            dLdO = dLdZ; % [C x T x B]
+
+            % Output projection O = Wo * Y2 + bo, where Y = V * weights'
+            dLdO2 = reshape(dLdO, U, []); % [U x (T*B)]
+
+            % Recompute Y for use in gradients
+            Y = pagemtimes(V, permute(weights, [2 1 3])); % [U x T x B]
+            Y2 = reshape(Y, U, []);
+
+            % Param grads for output projection
+            dLdWo = dLdO2 * Y2.';
+            dLdbo = sum(dLdO2, 2);
+            dLdY2 = layer.Wo.' * dLdO2; % [U x (T*B)]
+            dLdY = reshape(dLdY2, U, timeSteps, batchSize); % [U x T x B]
+
+            % Y = V * weights': per batch b
+            % dLdV_b = dLdY_b * weights_b
+            % dLdWeights_b = (dLdY_b') * V_b
+            dLdV = pagemtimes(dLdY, weights); % [U x T x B]
+            dLdW = pagemtimes(permute(dLdY, [2 1 3]), permute(V, [1 2 3])); % [T x T x B]
+
+            % Backprop through softmax: weights = softmax(scores) row-wise over dim=2
+            % For each row i: dL/dscores_i = (dL/dw_i .* w_i) - w_i * sum(dL/dw_i .* w_i)
+            tmp = dLdW .* weights;                 % [T x T x B]
+            sumRow = sum(tmp, 2);                  % [T x 1 x B]
+            dLdScores = tmp - weights .* sumRow;   % [T x T x B]
+
+            % scores = Qt * K / sqrt(U)
+            dLdQt = pagemtimes(dLdScores, permute(K, [2 1 3])) ./ sqrt(U); % [T x U x B]
+            dLdK  = pagemtimes(permute(Qt, [2 1 3]), dLdScores) ./ sqrt(U); % [U x T x B]
+            dLdQ  = permute(dLdQt, [2 1 3]); % [U x T x B]
+
+            % V contribution already in dLdV
+
+            % Combine grads back to X via projections
+            dLdQ2 = reshape(dLdQ, U, []); % [U x (T*B)]
+            dLdK2 = reshape(dLdK, U, []);
+            dLdV2 = reshape(dLdV, U, []);
+
+            dLdWq = dLdQ2 * X2.';
+            dLdbq = sum(dLdQ2, 2);
+            dLdX_from_Q = layer.Wq.' * dLdQ2; % [C x (T*B)]
+
+            dLdWk = dLdK2 * X2.';
+            dLdbk = sum(dLdK2, 2);
+            dLdX_from_K = layer.Wk.' * dLdK2;
+
+            dLdWv = dLdV2 * X2.';
+            dLdbv = sum(dLdV2, 2);
+            dLdX_from_V = layer.Wv.' * dLdV2;
+
+            dLdX_proj = dLdX_from_Q + dLdX_from_K + dLdX_from_V; % [C x (T*B)]
+            dLdX_proj = reshape(dLdX_proj, channels, timeSteps, batchSize);
+
+            % Residual add from Z = O + X
+            dLdX = dLdX_proj + dLdZ;
+        end
     end
 end
 
