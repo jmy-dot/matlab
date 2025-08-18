@@ -354,26 +354,30 @@ for k = kValues
         'L2Regularization', 5e-5, ...
         'GradientThreshold', 1, ...
         'Plots', 'training-progress', ...
-        'OutputNetwork', 'best-validation-loss', ...
+        'OutputNetwork', 'last-iteration', ...
         'ExecutionEnvironment', 'auto');
 
     %% Train
     tic
     fprintf('Training ResNet + BiLSTM model...\n');
-    simNet = trainNetwork(XTrain, yTrain, lgraph, options); %#ok<NASGU>
+    [simNet, trainInfo] = trainNetwork(XTrain, yTrain, lgraph, options); %#ok<ASGLU>
     TrainTime = seconds(toc); %#ok<NASGU>
     disp("Model training completed.");
 
-    %% Evaluate
+    %% Evaluate (final-iteration model)
     yTestPred = classify(simNet, XTest, 'ExecutionEnvironment', 'auto');
     testAccuracy = mean(yTest == yTestPred);
-    disp("Model test accuracy: " + testAccuracy*100 + "%")
+    disp("Final model test accuracy: " + testAccuracy*100 + "%")
     figure
     cm = confusionchart(yTest, yTestPred);
     cm.Title = 'ResNet+BiLSTM Confusion Matrix (Test)';
     cm.RowSummary = 'row-normalized';
     confusionFileName = sprintf('Optimized_Result_%d_SNR_%d_Frame_%d_San_%d', numTotalRouters,SNR,localFramesPerRouter,san);
     saveas(gcf,confusionFileName,'png');
+
+    %% Also report best-validation checkpoint metrics for clarity
+    [bestValLoss, idxBest] = min(trainInfo.ValidationLoss);
+    fprintf('Best validation loss %.4f at epoch %d\n', bestValLoss, idxBest);
 
     %% Statistical validation (multiple shuffles)
     numTests = 50; % fewer to keep runtime reasonable
