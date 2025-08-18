@@ -259,6 +259,16 @@ for k = kValues
     [lgraph, lastName] = addDilatedResidual1D(lgraph, 'dres1', embedDim, embedDim, 2, lastName);
     [lgraph, lastName] = addDilatedResidual1D(lgraph, 'dres2', embedDim, embedDim, 4, lastName);
 
+    % Insert custom single-head temporal self-attention block (compatible with R2023b)
+    attnBlock = [
+        layerNormalizationLayer('Name', 'pre_attn_norm')
+        TemporalSelfAttentionLayer(embedDim, 'self_attn')
+        dropoutLayer(0.1, 'Name', 'attn_drop')
+    ];
+    lgraph = addLayers(lgraph, attnBlock);
+    lgraph = connectLayers(lgraph, lastName, 'pre_attn_norm');
+    lastName = 'attn_drop';
+
     % BiLSTM stack
     rnn = [
         bilstmLayer(128, 'OutputMode', 'sequence', 'Name', 'bilstm1')
