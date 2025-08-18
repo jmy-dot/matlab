@@ -20,6 +20,15 @@ startProcessing = false;
 % Random seed for repeatability
 rng(123456);
 
+% Ensure custom layer class is accessible on path
+if exist('TemporalSelfAttentionLayer','class') ~= 8
+    try
+        addpath(fileparts(mfilename('fullpath')));
+    catch
+        % If running from base workspace without file context, assume current folder contains the class file
+    end
+end
+
 for localSNR = SNRList
 for localFramesPerRouter = FramesPerRouter
 for k = kValues
