@@ -222,6 +222,12 @@ for k = kValues
     yVal = categorical(yVal);
     yTest = categorical(yTest);
 
+    % Compute class weights to mitigate imbalance (normalized around 1)
+    classNames = categories(yTrain);
+    counts = countcats(yTrain);
+    invCounts = 1./max(counts,1);
+    classWeights = invCounts / mean(invCounts);
+
     % Convert to cell arrays for sequence networks: each cell [features(=2) x time(=frameLength)]
     XTrain = cell(numTrain,1);
     for i = 1:numTrain
@@ -237,6 +243,26 @@ for k = kValues
     for i = 1:numTest
         Xi = squeeze(xTestFrames(:, :, i));
         XTest{i} = Xi.';
+    end
+
+    % Lightweight training-time augmentation: temporal masking and small IQ rotation
+    % Apply only to training set (probabilities kept conservative)
+    for i = 1:numTrain
+        Xi = XTrain{i}; % [2 x T]
+        Tlen = size(Xi,2);
+        % Temporal mask (SpecAugment-like)
+        if rand < 0.15 && Tlen > 24
+            mlen = randi([8,20]);
+            t0 = randi([1, max(1, Tlen-mlen+1)]);
+            Xi(:, t0:min(Tlen, t0+mlen-1)) = 0;
+        end
+        % Small random phase rotation
+        if rand < 0.30
+            theta = (pi/180) * (randn*3); % ~N(0,3deg)
+            R = [cos(theta) -sin(theta); sin(theta) cos(theta)];
+            Xi = R * Xi;
+        end
+        XTrain{i} = Xi;
     end
 
     %% Build True ResNet + BiLSTM model (no unsupported attention)
@@ -290,9 +316,9 @@ for k = kValues
 
     % BiLSTM stack
     rnn = [
-        bilstmLayer(128, 'OutputMode', 'sequence', 'Name', 'bilstm1')
+        bilstmLayer(192, 'OutputMode', 'sequence', 'Name', 'bilstm1')
         dropoutLayer(0.3, 'Name', 'rnn_drop1')
-        bilstmLayer(64, 'OutputMode', 'last', 'Name', 'bilstm2')
+        bilstmLayer(128, 'OutputMode', 'last', 'Name', 'bilstm2')
         dropoutLayer(0.3, 'Name', 'rnn_drop2')
     ];
     lgraph = addLayers(lgraph, rnn);
@@ -305,26 +331,27 @@ for k = kValues
         dropoutLayer(0.4, 'Name', 'head_drop')
         fullyConnectedLayer(numClasses, 'Name', 'fc_final')
         softmaxLayer('Name', 'softmax')
-        classificationLayer('Name', 'output')
+        classificationLayer('Name', 'output', 'Classes', classNames, 'ClassWeights', classWeights')
     ];
     lgraph = addLayers(lgraph, head);
     lgraph = connectLayers(lgraph, 'rnn_drop2', 'fc1');
 
     %% Training options
-    miniBatchSize = 128;
+    miniBatchSize = 96;
     iterPerEpoch = max(1, floor(numTrain/miniBatchSize));
     options = trainingOptions('adam', ...
-        'MaxEpochs', 35, ...
+        'MaxEpochs', 45, ...
         'ValidationData', {XVal, yVal}, ...
         'ValidationFrequency', iterPerEpoch, ...
+        'ValidationPatience', 8, ...
         'Verbose', false, ...
-        'InitialLearnRate', 1e-3, ...
+        'InitialLearnRate', 5e-4, ...
         'LearnRateSchedule', 'piecewise', ...
-        'LearnRateDropFactor', 0.2, ...
-        'LearnRateDropPeriod', 8, ...
+        'LearnRateDropFactor', 0.5, ...
+        'LearnRateDropPeriod', 10, ...
         'MiniBatchSize', miniBatchSize, ...
         'Shuffle', 'every-epoch', ...
-        'L2Regularization', 1e-4, ...
+        'L2Regularization', 5e-5, ...
         'GradientThreshold', 1, ...
         'Plots', 'training-progress', ...
         'OutputNetwork', 'best-validation-loss', ...
