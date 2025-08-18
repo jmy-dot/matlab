@@ -1,4 +1,4 @@
-classdef TemporalSelfAttentionLayer < nnet.layer.Layer & nnet.layer.Formattable & nnet.layer.Acceleratable
+classdef TemporalSelfAttentionLayer < nnet.layer.Layer
     % TemporalSelfAttentionLayer
     % Single-head scaled dot-product self-attention over time for sequence data.
     % Input/Output: same size as input [C x T x B] (channels x time x batch).
@@ -37,15 +37,12 @@ classdef TemporalSelfAttentionLayer < nnet.layer.Layer & nnet.layer.Formattable 
             layer.bo = zeros([numUnits 1]);
         end
 
-        function Z = forward(layer, X)
-            % Ensure format to CTB (Channels x Time x Batch)
-            Xctb = layer.format(X, 'CTB');
-
-            % Sizes
-            [channels, timeSteps, batchSize] = size(Xctb);
+        function Z = predict(layer, X)
+            % X: [C x T x B]
+            [channels, timeSteps, batchSize] = size(X);
 
             % Flatten time and batch for linear projections
-            X2 = reshape(Xctb, channels, []); % [C x (T*B)]
+            X2 = reshape(X, channels, []); % [C x (T*B)]
 
             % Linear projections
             Q = layer.Wq * X2 + layer.bq; % [U x (T*B)]
@@ -58,15 +55,15 @@ classdef TemporalSelfAttentionLayer < nnet.layer.Layer & nnet.layer.Formattable 
             K = reshape(K, U, timeSteps, batchSize);
             V = reshape(V, U, timeSteps, batchSize);
 
-            % Attention scores: for each batch, (T x U) * (U x T) -> (T x T)
+            % Attention scores per batch: (T x U) * (U x T) -> (T x T)
             Qt = permute(Q, [2 1 3]); % [T x U x B]
-            Kt = permute(K, [1 2 3]); % [U x T x B]
+            Kt = K;                   % [U x T x B]
             scores = pagemtimes(Qt, Kt) ./ sqrt(U); % [T x T x B]
 
-            % Stable softmax over key/time dimension (dim=2)
+            % Stable softmax over time dimension (dim=2)
             scores = scores - max(scores, [], 2);
             weights = exp(scores);
-            weights = weights ./ sum(weights, 2);
+            weights = weights ./ (sum(weights, 2) + eps);
 
             % Context: V * weights' -> [U x T x B]
             Y = pagemtimes(V, permute(weights, [2 1 3]));
@@ -78,13 +75,10 @@ classdef TemporalSelfAttentionLayer < nnet.layer.Layer & nnet.layer.Formattable 
 
             % Residual connection (if channel sizes match)
             if channels == U
-                Out = O + Xctb;
+                Z = O + X;
             else
-                Out = O;
+                Z = O;
             end
-
-            % Restore original formatting
-            Z = layer.formatInverse(Out);
         end
     end
 end
