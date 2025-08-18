@@ -69,7 +69,7 @@ classdef TemporalSelfAttentionLayer < nnet.layer.Layer
             Z = iFromUTB(Zutb, needPermute);
         end
 
-        function [dLdX, dLdWq, dLdbq, dLdWk, dLdbk, dLdWv, dLdbv, dLdWo, dLdbo] = backward(layer, X, Z, dLdZ, ~)
+        function [dLdX, dLdWq, dLdWk, dLdWv, dLdWo, dLdbq, dLdbk, dLdbv, dLdbo] = backward(layer, X, Z, dLdZ, ~)
             U = layer.NumUnits;
             % Normalize to [U x T x B]
             [Xutb, needPermute] = iToUTB(X, U);
