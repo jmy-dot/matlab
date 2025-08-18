@@ -274,67 +274,27 @@ for k = kValues
     lgraph = addLayers(lgraph, sequenceInputLayer(inputFeatureSize, 'Name', 'input'));
 
     % Initial 1D Conv stem
-    stem = [
-        convolution1dLayer(7, 64, 'Padding', 'same', 'Stride', 1, 'Name', 'stem_conv')
-        batchNormalizationLayer('Name', 'stem_bn')
-        reluLayer('Name', 'stem_relu')
-        dropoutLayer(0.1, 'Name', 'stem_drop')
-    ];
-    lgraph = addLayers(lgraph, stem);
-    lgraph = connectLayers(lgraph, 'input', 'stem_conv');
+    [lgraph, lastName] = addStem1D(lgraph, 'input');
 
-    % Residual blocks: [64] x 1 -> [128] x 2 (downsample first) -> [256] x 2 (downsample first)
-    [lgraph, lastName] = addResidualBlock1D(lgraph, 'res1', 64, 64, 1, 'stem_drop');
-    [lgraph, lastName] = addResidualBlock1D(lgraph, 'res2', 64, 128, 2, lastName);   % downsample to 128
-    [lgraph, lastName] = addResidualBlock1D(lgraph, 'res3', 128, 128, 1, lastName);
-    [lgraph, lastName] = addResidualBlock1D(lgraph, 'res4', 128, embedDim, 2, lastName); % downsample to 256
-    [lgraph, lastName] = addResidualBlock1D(lgraph, 'res5', embedDim, embedDim, 1, lastName);
+    % ResNet backbone
+    [lgraph, lastName] = addResNetBackbone1D(lgraph, lastName, embedDim);
 
     % Extra temporal context via dilated residual blocks to mimic long-range modeling
-    [lgraph, lastName] = addDilatedResidual1D(lgraph, 'dres1', embedDim, embedDim, 2, lastName);
-    [lgraph, lastName] = addDilatedResidual1D(lgraph, 'dres2', embedDim, embedDim, 4, lastName);
+    [lgraph, lastName] = addDilatedStack1D(lgraph, lastName, embedDim);
 
-    % Channel alignment to ensure attention input has exactly 'embedDim' channels
-    alignBlock = [
-        convolution1dLayer(1, embedDim, 'Padding', 'same', 'Stride', 1, 'Name', 'align_conv')
-        batchNormalizationLayer('Name', 'align_bn')
-        reluLayer('Name', 'align_relu')
-    ];
-    lgraph = addLayers(lgraph, alignBlock);
-    lgraph = connectLayers(lgraph, lastName, 'align_conv');
-    lastName = 'align_relu';
+    % Channel alignment
+    [lgraph, lastName] = addAlignBlock1D(lgraph, lastName, embedDim);
 
-    % Insert custom single-head temporal self-attention block (compatible with R2023b)
-    attnBlock = [
-        layerNormalizationLayer('Name', 'pre_attn_norm')
-        TemporalSelfAttentionLayer(embedDim, 'self_attn')
-        dropoutLayer(0.1, 'Name', 'attn_drop')
-    ];
-    lgraph = addLayers(lgraph, attnBlock);
-    lgraph = connectLayers(lgraph, lastName, 'pre_attn_norm');
-    lastName = 'attn_drop';
+    % Temporal self-attention block
+    [lgraph, lastName] = addSelfAttentionBlock(lgraph, lastName, embedDim);
 
     % BiLSTM stack
-    rnn = [
-        bilstmLayer(192, 'OutputMode', 'sequence', 'Name', 'bilstm1')
-        dropoutLayer(0.3, 'Name', 'rnn_drop1')
-        bilstmLayer(128, 'OutputMode', 'last', 'Name', 'bilstm2')
-        dropoutLayer(0.3, 'Name', 'rnn_drop2')
-    ];
-    lgraph = addLayers(lgraph, rnn);
-    lgraph = connectLayers(lgraph, lastName, 'bilstm1');
+    % BiLSTM stack
+    [lgraph, lastName] = addBiLSTMStack(lgraph, lastName);
 
     % Classifier head
-    head = [
-        fullyConnectedLayer(256, 'Name', 'fc1')
-        reluLayer('Name', 'relu_fc1')
-        dropoutLayer(0.4, 'Name', 'head_drop')
-        fullyConnectedLayer(numClasses, 'Name', 'fc_final')
-        softmaxLayer('Name', 'softmax')
-        classificationLayer('Name', 'output', 'Classes', classNames, 'ClassWeights', classWeights')
-    ];
-    lgraph = addLayers(lgraph, head);
-    lgraph = connectLayers(lgraph, 'rnn_drop2', 'fc1');
+    % Classifier head
+    [lgraph, lastName] = addClassifierHead(lgraph, lastName, numClasses, classNames, classWeights);
 
     %% Training options
     miniBatchSize = 96;
@@ -479,6 +439,86 @@ function [lgraph, outName] = addDilatedResidual1D(lgraph, blockName, inChannels,
     outName = blockName + "_out";
 end
 
+%% Modular builders
+function [lgraph, outName] = addStem1D(lgraph, inputName)
+% Feature stem: shallow conv to expand channel capacity and stabilize input
+    stem = [
+        convolution1dLayer(7, 64, 'Padding', 'same', 'Stride', 1, 'Name', 'stem_conv')
+        batchNormalizationLayer('Name', 'stem_bn')
+        reluLayer('Name', 'stem_relu')
+        dropoutLayer(0.1, 'Name', 'stem_drop')
+    ];
+    lgraph = addLayers(lgraph, stem);
+    lgraph = connectLayers(lgraph, inputName, 'stem_conv');
+    outName = 'stem_drop';
+end
+
+function [lgraph, outName] = addResNetBackbone1D(lgraph, inName, embedDim)
+% ResNet backbone: channel progression 64->128->embedDim with projection skips
+    [lgraph, outName] = addResidualBlock1D(lgraph, 'res1', 64, 64, 1, inName);
+    [lgraph, outName] = addResidualBlock1D(lgraph, 'res2', 64, 128, 2, outName);
+    [lgraph, outName] = addResidualBlock1D(lgraph, 'res3', 128, 128, 1, outName);
+    [lgraph, outName] = addResidualBlock1D(lgraph, 'res4', 128, embedDim, 2, outName);
+    [lgraph, outName] = addResidualBlock1D(lgraph, 'res5', embedDim, embedDim, 1, outName);
+end
+
+function [lgraph, outName] = addDilatedStack1D(lgraph, inName, embedDim)
+% Two dilated residual blocks for long-range temporal context
+    [lgraph, outName] = addDilatedResidual1D(lgraph, 'dres1', embedDim, embedDim, 2, inName);
+    [lgraph, outName] = addDilatedResidual1D(lgraph, 'dres2', embedDim, embedDim, 4, outName);
+end
+
+function [lgraph, outName] = addAlignBlock1D(lgraph, inName, embedDim)
+% 1x1 Conv alignment to enforce exact embedDim channels before attention
+    alignBlock = [
+        convolution1dLayer(1, embedDim, 'Padding', 'same', 'Stride', 1, 'Name', 'align_conv')
+        batchNormalizationLayer('Name', 'align_bn')
+        reluLayer('Name', 'align_relu')
+    ];
+    lgraph = addLayers(lgraph, alignBlock);
+    lgraph = connectLayers(lgraph, inName, 'align_conv');
+    outName = 'align_relu';
+end
+
+function [lgraph, outName] = addSelfAttentionBlock(lgraph, inName, embedDim)
+% LayerNorm + custom self-attention + dropout
+    attn = [
+        layerNormalizationLayer('Name', 'pre_attn_norm')
+        TemporalSelfAttentionLayer(embedDim, 'self_attn')
+        dropoutLayer(0.1, 'Name', 'attn_drop')
+    ];
+    lgraph = addLayers(lgraph, attn);
+    lgraph = connectLayers(lgraph, inName, 'pre_attn_norm');
+    outName = 'attn_drop';
+end
+
+function [lgraph, outName] = addBiLSTMStack(lgraph, inName)
+% Two-layer BiLSTM stack for temporal modeling
+    rnn = [
+        bilstmLayer(192, 'OutputMode', 'sequence', 'Name', 'bilstm1')
+        dropoutLayer(0.3, 'Name', 'rnn_drop1')
+        bilstmLayer(128, 'OutputMode', 'last', 'Name', 'bilstm2')
+        dropoutLayer(0.3, 'Name', 'rnn_drop2')
+    ];
+    lgraph = addLayers(lgraph, rnn);
+    lgraph = connectLayers(lgraph, inName, 'bilstm1');
+    outName = 'rnn_drop2';
+end
+
+function [lgraph, outName] = addClassifierHead(lgraph, inName, numClasses, classNames, classWeights)
+% Dense head with class weights for imbalance mitigation
+    head = [
+        fullyConnectedLayer(256, 'Name', 'fc1')
+        reluLayer('Name', 'relu_fc1')
+        dropoutLayer(0.4, 'Name', 'head_drop')
+        fullyConnectedLayer(numClasses, 'Name', 'fc_final')
+        softmaxLayer('Name', 'softmax')
+        classificationLayer('Name', 'output', 'Classes', classNames, 'ClassWeights', classWeights')
+    ];
+    lgraph = addLayers(lgraph, head);
+    lgraph = connectLayers(lgraph, inName, 'fc1');
+    outName = 'output';
+end
 %% Helper Functions (RF impairments and alpha sampler)
 function [impairedSig] = helperRFImpairments(sig, radioImpairments, fs)
 % helperRFImpairments Apply RF impairments
