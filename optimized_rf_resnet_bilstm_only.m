@@ -268,6 +268,16 @@ for k = kValues
     [lgraph, lastName] = addDilatedResidual1D(lgraph, 'dres1', embedDim, embedDim, 2, lastName);
     [lgraph, lastName] = addDilatedResidual1D(lgraph, 'dres2', embedDim, embedDim, 4, lastName);
 
+    % Channel alignment to ensure attention input has exactly 'embedDim' channels
+    alignBlock = [
+        convolution1dLayer(1, embedDim, 'Padding', 'same', 'Stride', 1, 'Name', 'align_conv')
+        batchNormalizationLayer('Name', 'align_bn')
+        reluLayer('Name', 'align_relu')
+    ];
+    lgraph = addLayers(lgraph, alignBlock);
+    lgraph = connectLayers(lgraph, lastName, 'align_conv');
+    lastName = 'align_relu';
+
     % Insert custom single-head temporal self-attention block (compatible with R2023b)
     attnBlock = [
         layerNormalizationLayer('Name', 'pre_attn_norm')
