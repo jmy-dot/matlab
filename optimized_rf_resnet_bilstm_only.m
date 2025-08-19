@@ -285,6 +285,10 @@ for k = kValues
     % Channel alignment
     [lgraph, lastName] = addAlignBlock1D(lgraph, lastName, embedDim);
 
+    % Inception-style multi-branch temporal blocks to increase connectivity
+    [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc1');
+    [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc2');
+
     % Temporal self-attention block
     [lgraph, lastName] = addSelfAttentionBlock(lgraph, lastName, embedDim);
 
@@ -513,6 +517,72 @@ function [lgraph, outName] = addClassifierHead(lgraph, inName, numClasses, class
     lgraph = addLayers(lgraph, head);
     lgraph = connectLayers(lgraph, inName, 'fc1');
     outName = 'output';
+end
+
+function [lgraph, outName] = addInceptionDilated1D(lgraph, inName, outChannels, blockId)
+% Inception-like parallel dilated temporal convs + residual aggregation
+    br1 = [
+        convolution1dLayer(1, outChannels/4, 'Padding','same','Stride',1,'Name',[blockId '_br1_conv1'])
+        reluLayer('Name',[blockId '_br1_relu1'])
+        convolution1dLayer(3, outChannels/4, 'Padding','same','DilationFactor',1,'Name',[blockId '_br1_conv3'])
+        batchNormalizationLayer('Name',[blockId '_br1_bn'])
+        reluLayer('Name',[blockId '_br1_relu2'])
+    ];
+    br2 = [
+        convolution1dLayer(1, outChannels/4, 'Padding','same','Stride',1,'Name',[blockId '_br2_conv1'])
+        reluLayer('Name',[blockId '_br2_relu1'])
+        convolution1dLayer(3, outChannels/4, 'Padding','same','DilationFactor',2,'Name',[blockId '_br2_conv3d2'])
+        batchNormalizationLayer('Name',[blockId '_br2_bn'])
+        reluLayer('Name',[blockId '_br2_relu2'])
+    ];
+    br3 = [
+        convolution1dLayer(1, outChannels/4, 'Padding','same','Stride',1,'Name',[blockId '_br3_conv1'])
+        reluLayer('Name',[blockId '_br3_relu1'])
+        convolution1dLayer(5, outChannels/4, 'Padding','same','DilationFactor',3,'Name',[blockId '_br3_conv5d3'])
+        batchNormalizationLayer('Name',[blockId '_br3_bn'])
+        reluLayer('Name',[blockId '_br3_relu2'])
+    ];
+    br4 = [
+        maxPooling1dLayer(3,'Stride',1,'Padding','same','Name',[blockId '_br4_pool'])
+        convolution1dLayer(1, outChannels/4, 'Padding','same','Stride',1,'Name',[blockId '_br4_conv1'])
+        batchNormalizationLayer('Name',[blockId '_br4_bn'])
+        reluLayer('Name',[blockId '_br4_relu'])
+    ];
+
+    lgraph = addLayers(lgraph, br1);
+    lgraph = addLayers(lgraph, br2);
+    lgraph = addLayers(lgraph, br3);
+    lgraph = addLayers(lgraph, br4);
+
+    % Connect input to four branches
+    lgraph = connectLayers(lgraph, inName, [blockId '_br1_conv1']);
+    lgraph = connectLayers(lgraph, inName, [blockId '_br2_conv1']);
+    lgraph = connectLayers(lgraph, inName, [blockId '_br3_conv1']);
+    lgraph = connectLayers(lgraph, inName, [blockId '_br4_pool']);
+
+    % Concatenate branches
+    concatName = [blockId '_concat'];
+    lgraph = addLayers(lgraph, depthConcatenationLayer(4,'Name',concatName));
+    lgraph = connectLayers(lgraph, [blockId '_br1_relu2'], [concatName '/in1']);
+    lgraph = connectLayers(lgraph, [blockId '_br2_relu2'], [concatName '/in2']);
+    lgraph = connectLayers(lgraph, [blockId '_br3_relu2'], [concatName '/in3']);
+    lgraph = connectLayers(lgraph, [blockId '_br4_relu'],  [concatName '/in4']);
+
+    % Project back to outChannels and add residual
+    proj = [
+        convolution1dLayer(1, outChannels, 'Padding','same','Stride',1,'Name',[blockId '_proj_conv'])
+        batchNormalizationLayer('Name',[blockId '_proj_bn'])
+    ];
+    addName = [blockId '_add'];
+    outRelu = reluLayer('Name',[blockId '_out']);
+    lgraph = addLayers(lgraph, proj);
+    lgraph = addLayers(lgraph, additionLayer(2,'Name',addName));
+    lgraph = addLayers(lgraph, outRelu);
+    lgraph = connectLayers(lgraph, concatName, [blockId '_proj_conv']);
+    lgraph = connectLayers(lgraph, [blockId '_proj_bn'], [addName '/in1']);
+    lgraph = connectLayers(lgraph, inName, [addName '/in2']);
+    lgraph = connectLayers(lgraph, addName, [blockId '_out']);
+    outName = [blockId '_out'];
 end
 %% Helper Functions (RF impairments and alpha sampler)
 function [impairedSig] = helperRFImpairments(sig, radioImpairments, fs)
