@@ -22,7 +22,7 @@ rng(123456);
 
 % Speed/robustness toggles
 enableParallel = false;    % Set false to avoid parallel overhead and potential stalls
-showTrainingPlot = false;  % Disable training-progress UI for speed
+showTrainingPlot = true;  % Enable training-progress UI to show plots
 
 % Ensure custom layer class is accessible on path
 if exist('TemporalSelfAttentionLayer','class') ~= 8
