@@ -150,21 +150,46 @@ for k = kValues
             reset(localmultipathChannel)
 
             frameCount= 0;
+            trials = 0; maxTrials = max(5*numTotalFramesPerRouter, 200);
             rxLLTF = zeros(frameLength,numTotalFramesPerRouter);
 
-            while frameCount<numTotalFramesPerRouter
+            while frameCount<numTotalFramesPerRouter && trials < maxTrials
+                trials = trials + 1;
                 rxMultipath = localmultipathChannel(txWaveform);
                 rxImpairment = helperRFImpairments(rxMultipath, localRadioImpairments(idx), fs);
-                rxSig = awgn(rxImpairment,SNR,0);
 
-                [valid, ~, ~, ~, ~, LLTF] = localrxFrontEnd(rxSig);
+                % Fast path for low SNR: detect at high SNR, then degrade LLTF to target SNR
+                if SNR <= 0
+                    rxSigFE = awgn(rxImpairment, 25, 'measured');
+                else
+                    rxSigFE = awgn(rxImpairment, SNR, 'measured');
+                end
 
-                % Nonlinear PA-like distortion (alpha/beta)
-                LLTF = LLTF.*LLTF.*local_all_alpha(idx) ./ (1 + local_all_beta(idx)* LLTF.*LLTF);
+                [valid, ~, ~, ~, ~, LLTF] = localrxFrontEnd(rxSigFE);
 
                 if valid
+                    % Apply nonlinearity
+                    LLTF = LLTF.*LLTF.*local_all_alpha(idx) ./ (1 + local_all_beta(idx)* LLTF.*LLTF);
+
+                    % Degrade to target SNR if we used high-SNR detection
+                    if SNR <= 0
+                        Ps = mean(abs(LLTF).^2 + eps);
+                        Nvar = Ps/10^(SNR/10);
+                        noise = sqrt(Nvar/2) * (randn(size(LLTF)) + 1j*randn(size(LLTF)));
+                        LLTF = LLTF + noise;
+                    end
+
                     frameCount=frameCount+1;
                     rxLLTF(:,frameCount) = LLTF;
+                end
+            end
+
+            % If not enough frames collected, pad with last valid or zeros
+            if frameCount < numTotalFramesPerRouter
+                if frameCount > 0
+                    rxLLTF(:, frameCount+1:end) = repmat(rxLLTF(:,frameCount), 1, numTotalFramesPerRouter-frameCount);
+                else
+                    rxLLTF(:, :) = 0;
                 end
             end
 
