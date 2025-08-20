@@ -5,7 +5,7 @@
 %% Experiment sweep controls
 kValues = [1,2,3];                  % Multiplier for number of transmitters
 FramesPerRouter = [50,100,150,200]; % You can extend if needed
-SNRList = [20,30,40];
+SNRList = [-10, -5, 0, 5, 10];
 
 % Define ratio of known and unknown transmitters
 originalNumKnownRouters = 67;
@@ -245,22 +245,27 @@ for k = kValues
         XTest{i} = Xi.';
     end
 
-    % Lightweight training-time augmentation: temporal masking and small IQ rotation
+    % Stronger training-time augmentation for low SNR: temporal masking, phase jitter, random gain
     % Apply only to training set (probabilities kept conservative)
     for i = 1:numTrain
         Xi = XTrain{i}; % [2 x T]
         Tlen = size(Xi,2);
         % Temporal mask (SpecAugment-like)
-        if rand < 0.15 && Tlen > 24
+        if rand < 0.25 && Tlen > 24
             mlen = randi([8,20]);
             t0 = randi([1, max(1, Tlen-mlen+1)]);
             Xi(:, t0:min(Tlen, t0+mlen-1)) = 0;
         end
-        % Small random phase rotation
-        if rand < 0.30
-            theta = (pi/180) * (randn*3); % ~N(0,3deg)
+        % Random phase jitter
+        if rand < 0.45
+            theta = (pi/180) * (randn*6); % ~N(0,6deg)
             R = [cos(theta) -sin(theta); sin(theta) cos(theta)];
             Xi = R * Xi;
+        end
+        % Random gain perturbation
+        if rand < 0.35
+            g = 10^(randn*0.02); % ~ +/-0.17dB
+            Xi = Xi * g;
         end
         XTrain{i} = Xi;
     end
@@ -273,8 +278,10 @@ for k = kValues
     lgraph = layerGraph();
     [lgraph, inputName] = addInputLayer1D(lgraph, inputFeatureSize);
 
+    % Optional denoise block for low SNR prior to stem
+    [lgraph, lastName] = addDenoiseBlock1D(lgraph, inputName);
     % Initial 1D Conv stem
-    [lgraph, lastName] = addStem1D(lgraph, inputName);
+    [lgraph, lastName] = addStem1D(lgraph, lastName);
 
     % ResNet backbone
     [lgraph, lastName] = addResNetBackbone1D(lgraph, lastName, embedDim);
@@ -301,20 +308,20 @@ for k = kValues
     [lgraph, lastName] = addClassifierHead(lgraph, lastName, numClasses, classNames, classWeights);
 
     %% Training options
-    miniBatchSize = 96;
+    miniBatchSize = 128;
     iterPerEpoch = max(1, floor(numTrain/miniBatchSize));
     options = trainingOptions('adam', ...
         'MaxEpochs', 45, ...
         'ValidationData', {XVal, yVal}, ...
         'ValidationFrequency', iterPerEpoch, ...
         'Verbose', false, ...
-        'InitialLearnRate', 5e-4, ...
+        'InitialLearnRate', 3e-4, ...
         'LearnRateSchedule', 'piecewise', ...
         'LearnRateDropFactor', 0.5, ...
-        'LearnRateDropPeriod', 10, ...
+        'LearnRateDropPeriod', 12, ...
         'MiniBatchSize', miniBatchSize, ...
         'Shuffle', 'every-epoch', ...
-        'L2Regularization', 5e-5, ...
+        'L2Regularization', 1e-4, ...
         'GradientThreshold', 1, ...
         'Plots', 'training-progress', ...
         'OutputNetwork', 'last-iteration', ...
@@ -457,6 +464,26 @@ function [lgraph, inputName] = addInputLayer1D(lgraph, inputFeatureSize)
     inputName = 'input';
     inLayer = sequenceInputLayer(inputFeatureSize, 'Name', inputName);
     lgraph = addLayers(lgraph, inLayer);
+end
+
+function [lgraph, outName] = addDenoiseBlock1D(lgraph, inName)
+% Denoise block: lightweight temporal smoothing + learnable enhancement
+    blk = [
+        averagePooling1dLayer(3, 'Stride',1, 'Padding','same', 'Name','denoise_avg')
+        convolution1dLayer(3, 8, 'Padding','same','Stride',1,'Name','denoise_conv')
+        batchNormalizationLayer('Name','denoise_bn')
+        reluLayer('Name','denoise_relu')
+    ];
+    addName = 'denoise_add';
+    outRelu = reluLayer('Name','denoise_out');
+    lgraph = addLayers(lgraph, blk);
+    lgraph = addLayers(lgraph, additionLayer(2,'Name',addName));
+    lgraph = addLayers(lgraph, outRelu);
+    lgraph = connectLayers(lgraph, inName, 'denoise_avg');
+    lgraph = connectLayers(lgraph, 'denoise_relu', [addName '/in1']);
+    lgraph = connectLayers(lgraph, inName, [addName '/in2']);
+    lgraph = connectLayers(lgraph, addName, 'denoise_out');
+    outName = 'denoise_out';
 end
 
 function [lgraph, outName] = addResNetBackbone1D(lgraph, inName, embedDim)
