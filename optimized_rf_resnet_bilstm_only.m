@@ -271,10 +271,10 @@ for k = kValues
     numClasses = numKnownRouters + 1; % include Unknown
 
     lgraph = layerGraph();
-    lgraph = addLayers(lgraph, sequenceInputLayer(inputFeatureSize, 'Name', 'input'));
+    [lgraph, inputName] = addInputLayer1D(lgraph, inputFeatureSize);
 
     % Initial 1D Conv stem
-    [lgraph, lastName] = addStem1D(lgraph, 'input');
+    [lgraph, lastName] = addStem1D(lgraph, inputName);
 
     % ResNet backbone
     [lgraph, lastName] = addResNetBackbone1D(lgraph, lastName, embedDim);
@@ -450,6 +450,13 @@ function [lgraph, outName] = addStem1D(lgraph, inputName)
     lgraph = addLayers(lgraph, stem);
     lgraph = connectLayers(lgraph, inputName, 'stem_conv');
     outName = 'stem_drop';
+end
+
+function [lgraph, inputName] = addInputLayer1D(lgraph, inputFeatureSize)
+% Input layer for 1-D sequence features (e.g., 2 for I/Q)
+    inputName = 'input';
+    inLayer = sequenceInputLayer(inputFeatureSize, 'Name', inputName);
+    lgraph = addLayers(lgraph, inLayer);
 end
 
 function [lgraph, outName] = addResNetBackbone1D(lgraph, inName, embedDim)
