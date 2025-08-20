@@ -20,6 +20,10 @@ startProcessing = false;
 % Random seed for repeatability
 rng(123456);
 
+% Speed/robustness toggles
+enableParallel = false;    % Set false to avoid parallel overhead and potential stalls
+showTrainingPlot = false;  % Disable training-progress UI for speed
+
 % Ensure custom layer class is accessible on path
 if exist('TemporalSelfAttentionLayer','class') ~= 8
     try
@@ -103,9 +107,10 @@ for k = kValues
     tic
     generatedMACAddresses = strings(numTotalRouters, 1);
 
-    % Parallel frame generation
-    spmd
-        routerIndices = spmdIndex:spmdSize:numTotalRouters;
+    % Parallel/serial frame generation
+    if enableParallel && license('test','Distrib_Computing_Toolbox')
+        spmd
+            routerIndices = spmdIndex:spmdSize:numTotalRouters;
 
         localGeneratedMACAddresses = strings(length(routerIndices), 1);
         localxTrainingFrames = zeros(frameLength, numTrainingFramesPerRouter*length(routerIndices));
@@ -180,16 +185,73 @@ for k = kValues
             localxTestFrames(:, idxStartTest:idxEndTest) = rxLLTF(:, testIndices + numTrainingFramesPerRouter+numValidationFramesPerRouter);
         end
 
-        generatedMACAddressesLab = localGeneratedMACAddresses;
-        xTrainingFramesLab = localxTrainingFrames;
-        xValFramesLab = localxValFrames;
-        xTestFramesLab = localxTestFrames;
-    end
+            generatedMACAddressesLab = localGeneratedMACAddresses;
+            xTrainingFramesLab = localxTrainingFrames;
+            xValFramesLab = localxValFrames;
+            xTestFramesLab = localxTestFrames;
+        end
 
-    generatedMACAddresses = vertcat(generatedMACAddressesLab{:});
-    xTrainingFrames = horzcat(xTrainingFramesLab{:});
-    xValFrames = horzcat(xValFramesLab{:});
-    xTestFrames = horzcat(xTestFramesLab{:});
+        generatedMACAddresses = vertcat(generatedMACAddressesLab{:});
+        xTrainingFrames = horzcat(xTrainingFramesLab{:});
+        xValFrames = horzcat(xValFramesLab{:});
+        xTestFrames = horzcat(xTestFramesLab{:});
+    else
+        routerIndices = 1:numTotalRouters;
+        generatedMACAddresses = strings(numTotalRouters,1);
+        xTrainingFrames = zeros(frameLength, numTrainingFramesPerRouter*numTotalRouters);
+        xValFrames = zeros(frameLength, numValidationFramesPerRouter*numTotalRouters);
+        xTestFrames = zeros(frameLength, numTestFramesPerRouter*numTotalRouters);
+
+        % Local configs reused in loop
+        frameBodyConfig = wlanMACManagementConfig;
+        localbeaconFrameConfig = wlanMACFrameConfig('FrameType', 'Beacon', "ManagementConfig", frameBodyConfig);
+        [~, mpduLength] = wlanMACFrame(localbeaconFrameConfig, 'OutputFormat', 'bits');
+        localnonHTConfig = wlanNonHTConfig('ChannelBandwidth', "CBW20", "MCS", 1, "PSDULength", mpduLength);
+        localrxFrontEnd = rfFingerprintingNonHTFrontEnd('ChannelBandwidth', 'CBW20');
+        localmultipathChannel = comm.RayleighChannel('SampleRate', fs, 'PathDelays', [0 1.8 3.4]/fs, 'AveragePathGains', [0 -2 -10], 'MaximumDopplerShift', 0);
+        localRadioImpairments = radioImpairments;
+        local_all_alpha = all_alpha;
+        local_all_beta = all_beta;
+
+        for idx = 1:length(routerIndices)
+            routerIdx = routerIndices(idx);
+            if (routerIdx<=numKnownRouters)
+                generatedMACAddresses(idx) = string(dec2hex(bi2de(randi([0 1], 12, 4)))');
+            else
+                generatedMACAddresses(idx) = 'AAAAAAAAAAAA';
+            end
+
+            localbeaconFrameConfig.Address2 = generatedMACAddresses(idx);
+            beacon = wlanMACFrame(localbeaconFrameConfig, 'OutputFormat', 'bits');
+            txWaveform = wlanWaveformGenerator(beacon, localnonHTConfig);
+            txWaveform = helperNormalizeFramePower(txWaveform);
+            txWaveform = [txWaveform; zeros(160,1)]; %#ok<AGROW>
+
+            reset(localmultipathChannel)
+
+            frameCount= 0;
+            rxLLTF = zeros(frameLength,numTotalFramesPerRouter);
+            while frameCount<numTotalFramesPerRouter
+                rxMultipath = localmultipathChannel(txWaveform);
+                rxImpairment = helperRFImpairments(rxMultipath, localRadioImpairments(idx), fs);
+                rxSig = awgn(rxImpairment,SNR,0);
+                [valid, ~, ~, ~, ~, LLTF] = localrxFrontEnd(rxSig);
+                LLTF = LLTF.*LLTF.*local_all_alpha(idx) ./ (1 + local_all_beta(idx)* LLTF.*LLTF);
+                if valid
+                    frameCount=frameCount+1;
+                    rxLLTF(:,frameCount) = LLTF;
+                end
+            end
+
+            rxLLTF = rxLLTF(:, randperm(numTotalFramesPerRouter));
+            idxStartTrain = (idx-1)*numTrainingFramesPerRouter + 1; idxEndTrain = idx*numTrainingFramesPerRouter;
+            xTrainingFrames(:, idxStartTrain:idxEndTrain) = rxLLTF(:, trainingIndices);
+            idxStartVal = (idx-1)*numValidationFramesPerRouter + 1;   idxEndVal = idx*numValidationFramesPerRouter;
+            xValFrames(:, idxStartVal:idxEndVal) = rxLLTF(:, validationIndices+ numTrainingFramesPerRouter);
+            idxStartTest = (idx-1)*numTestFramesPerRouter + 1;        idxEndTest = idx*numTestFramesPerRouter;
+            xTestFrames(:, idxStartTest:idxEndTest) = rxLLTF(:, testIndices + numTrainingFramesPerRouter+numValidationFramesPerRouter);
+        end
+    end
     GenerateTime = seconds(toc); %#ok<NASGU>
     toc
 
@@ -323,7 +385,7 @@ for k = kValues
         'Shuffle', 'every-epoch', ...
         'L2Regularization', 1e-4, ...
         'GradientThreshold', 1, ...
-        'Plots', 'training-progress', ...
+        'Plots', ternary(showTrainingPlot,'training-progress','none'), ...
         'OutputNetwork', 'last-iteration', ...
         'ExecutionEnvironment', 'auto');
 
@@ -633,6 +695,11 @@ function [impairedSig] = helperRFImpairments(sig, radioImpairments, fs)
     impPhNoise = phNoise(impFOff);
     % DC offset
     impairedSig = impPhNoise + 10^(radioImpairments.DCOffset/10);
+end
+
+function out = ternary(cond, a, b)
+% Simple inline ternary for options
+    if cond, out = a; else, out = b; end
 end
 
 function [phaseNoise] = helperGetPhaseNoise(radioImpairments)
