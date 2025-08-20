@@ -579,14 +579,21 @@ function [lgraph, outName] = addDenoiseBlock1D(lgraph, inName)
         batchNormalizationLayer('Name','denoise_bn')
         reluLayer('Name','denoise_relu')
     ];
+    % 1x1 conv to match channels for residual connection
+    matchConv = [
+        convolution1dLayer(1, 8, 'Padding','same','Stride',1,'Name','denoise_match')
+        batchNormalizationLayer('Name','denoise_match_bn')
+    ];
     addName = 'denoise_add';
     outRelu = reluLayer('Name','denoise_out');
     lgraph = addLayers(lgraph, blk);
+    lgraph = addLayers(lgraph, matchConv);
     lgraph = addLayers(lgraph, additionLayer(2,'Name',addName));
     lgraph = addLayers(lgraph, outRelu);
     lgraph = connectLayers(lgraph, inName, 'denoise_avg');
     lgraph = connectLayers(lgraph, 'denoise_relu', [addName '/in1']);
-    lgraph = connectLayers(lgraph, inName, [addName '/in2']);
+    lgraph = connectLayers(lgraph, inName, 'denoise_match');
+    lgraph = connectLayers(lgraph, 'denoise_match_bn', [addName '/in2']);
     lgraph = connectLayers(lgraph, addName, 'denoise_out');
     outName = 'denoise_out';
 end
