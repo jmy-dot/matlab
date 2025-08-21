@@ -270,25 +270,18 @@ for k = kValues
         XTest{i} = Xi.';
     end
 
-    % Stronger training-time augmentation for low SNR (training only)
+    % Light data augmentation to prevent overfitting
     for i = 1:numTrain
         Xi = XTrain{i}; % [4 x T]
-        Tlen = size(Xi,2);
-        % Temporal mask
-        if rand < 0.25 && Tlen > 24
-            mlen = randi([8,20]);
-            t0 = randi([1, max(1, Tlen-mlen+1)]);
-            Xi(:, t0:min(Tlen, t0+mlen-1)) = 0;
-        end
-        % Random phase jitter (rotate I/Q only)
-        if rand < 0.45
-            theta = (pi/180) * (randn*6);
+        % Only mild phase jitter (reduced probability and magnitude)
+        if rand < 0.2
+            theta = (pi/180) * (randn*3); % Reduced from 6deg to 3deg
             R = [cos(theta) -sin(theta); sin(theta) cos(theta)];
             Xi(1:2,:) = R * Xi(1:2,:);
         end
-        % Random gain perturbation (apply to I/Q and magnitude; do not change dphi)
-        if rand < 0.35
-            g = 10^(randn*0.02);
+        % Very mild gain perturbation
+        if rand < 0.15
+            g = 10^(randn*0.01); % Reduced from 0.02 to 0.01
             Xi(1:3,:) = Xi(1:3,:) * g;
         end
         XTrain{i} = Xi;
@@ -296,14 +289,14 @@ for k = kValues
 
     %% Build True ResNet + BiLSTM model with custom attention
     inputFeatureSize = 4;           % I, Q, |x|, dphi per time step
-    embedDim = 256;                 % Feature channels after CNN stack
+    embedDim = 128;                 % Reduced from 256 to 128
     numClasses = numKnownRouters + 1; % include Unknown
 
     lgraph = layerGraph();
     [lgraph, inputName] = addInputLayer1D(lgraph, inputFeatureSize);
 
-    % Optional denoise block for low SNR prior to stem
-    [lgraph, lastName] = addDenoiseBlock1D(lgraph, inputName);
+    % Skip denoise block to reduce complexity
+    lastName = inputName;
     % Initial 1D Conv stem
     [lgraph, lastName] = addStem1D(lgraph, lastName);
 
@@ -316,12 +309,11 @@ for k = kValues
     % Channel alignment
     [lgraph, lastName] = addAlignBlock1D(lgraph, lastName, embedDim);
 
-    % Inception-style multi-branch temporal blocks to increase connectivity
+    % Single inception block to reduce complexity
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc1');
-    [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc2');
 
-    % Temporal self-attention block
-    [lgraph, lastName] = addSelfAttentionBlock(lgraph, lastName, embedDim);
+    % Skip attention block to reduce complexity
+    lastName = lastName;
 
     % BiLSTM stack
     [lgraph, lastName] = addBiLSTMStack(lgraph, lastName);
@@ -330,24 +322,24 @@ for k = kValues
     [lgraph, lastName] = addClassifierHead(lgraph, lastName, numClasses, classNames, classWeights);
 
     %% Training options
-    miniBatchSize = 128;
+    miniBatchSize = 64;  % Reduced batch size
     iterPerEpoch = max(1, floor(numTrain/miniBatchSize));
     options = trainingOptions('adam', ...
-        'MaxEpochs', 45, ...
+        'MaxEpochs', 30, ...  % Reduced epochs
         'ValidationData', {XVal, yVal}, ...
-        'ValidationFrequency', max(1,ceil(iterPerEpoch/2)), ...
-        'MiniBatchSize', miniBatchSize, ...
-        'InitialLearnRate', 3e-4, ...
-        'LearnRateSchedule', 'piecewise', ...
-        'LearnRateDropFactor', 0.5, ...
-        'LearnRateDropPeriod', 10, ...
-        'L2Regularization', 1e-4, ...
-        'GradientThreshold', 1, ...
-        'Shuffle', 'every-epoch', ...
-        'ExecutionEnvironment', 'auto', ...
+        'ValidationFrequency', max(1,ceil(iterPerEpoch/3)), ...
         'Verbose', true, ...
+        'InitialLearnRate', 1e-4, ...  % Reduced learning rate
+        'LearnRateSchedule', 'piecewise', ...
+        'LearnRateDropFactor', 0.7, ...
+        'LearnRateDropPeriod', 8, ...
+        'MiniBatchSize', miniBatchSize, ...
+        'Shuffle', 'every-epoch', ...
+        'L2Regularization', 5e-4, ...  % Increased regularization
+        'GradientThreshold', 1, ...
         'Plots', ternary(showTrainingPlot,'training-progress','none'), ...
-        'OutputNetwork', 'last-iteration');
+        'OutputNetwork', 'best-validation', ...  % Use best validation model
+        'ExecutionEnvironment', 'auto');
 
     %% Train and evaluate
     [simNet, trainInfo] = trainNetwork(XTrain, yTrain, lgraph, options); %#ok<ASGLU>
