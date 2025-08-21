@@ -312,8 +312,8 @@ for k = kValues
     % Single inception block to reduce complexity
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc1');
 
-    % Skip attention block to reduce complexity
-    lastName = lastName;
+    % Temporal self-attention block
+    [lgraph, lastName] = addSelfAttentionBlock(lgraph, lastName, embedDim);
 
     % BiLSTM stack
     [lgraph, lastName] = addBiLSTMStack(lgraph, lastName);
