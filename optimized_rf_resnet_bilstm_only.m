@@ -23,6 +23,8 @@ rng(123456);
 % Speed/robustness toggles
 enableParallel = false;    % Avoid parallel overhead and stalls
 showTrainingPlot = true;   % Show training-progress UI
+useLegacyImpairments = false; % true to use comm.PhaseNoise/PhaseFrequencyOffset + LUT
+useLegacyAlpha = false;       % true to use legacy alpha sampler (mu=1.5, [1.2,2.8])
 
 % Ensure custom layer class is accessible on path
 if exist('TemporalSelfAttentionLayer','class') ~= 8
@@ -63,8 +65,14 @@ for k = kValues
     %% Per-router unique nonlinearity parameters
     all_alpha = zeros(1,numTotalRouters);
     all_beta = zeros(1,numTotalRouters);
+    % Select alpha sampler
+    if useLegacyAlpha
+        alphaSampler = @generateAlphaLegacy;
+    else
+        alphaSampler = @generateAlpha;
+    end
     for idx = 1:numTotalRouters
-        alpha = generateAlpha(san);
+        alpha = alphaSampler(san);
         beta = (alpha - 1) + 0.2 * rand(1) - 0.1;
         all_alpha(idx)= alpha;
         all_beta(idx)= beta;
@@ -109,6 +117,12 @@ for k = kValues
 
     % Serial frame generation (robust and simple)
     routerIndices = 1:numTotalRouters;
+    % Select RF impairment function
+    if useLegacyImpairments
+        rfImpairFn = @helperRFImpairmentsLegacy;
+    else
+        rfImpairFn = @helperRFImpairments;
+    end
     for idx = 1:length(routerIndices)
         routerIdx = routerIndices(idx);
         if (routerIdx<=numKnownRouters)
@@ -130,7 +144,7 @@ for k = kValues
         while frameCount<numTotalFramesPerRouter && trials < maxTrials
             trials = trials + 1;
             rxMultipath = multipathChannel(txWaveform);
-            rxImpairment = helperRFImpairments(rxMultipath, radioImpairments(idx), fs);
+            rxImpairment = rfImpairFn(rxMultipath, radioImpairments(idx), fs);
 
             if SNR <= 0
                 rxSigFE = awgn(rxImpairment, 25, 'measured');
@@ -362,6 +376,16 @@ function alpha = generateAlpha(san)
     alpha = min(max(alpha,0.7),1.3);
 end
 
+function alpha = generateAlphaLegacy(san)
+% Generate alpha with controlled variance and bounds (legacy)
+    mu = 1.5;
+    sigma = san;
+    alpha = mu + sigma * randn(1, 1);
+    while alpha < 1.2 || alpha > 2.8
+        alpha = mu + sigma * randn(1, 1);
+    end
+end
+
 function y = helperRFImpairments(x, imp, fs)
 % Apply basic RF impairments: phase noise (random walk), DC offset (dB), freq offset (ppm-based)
     N = length(x);
@@ -383,6 +407,29 @@ function y = helperRFImpairments(x, imp, fs)
         x = x + A*(1+1j);
     end
     y = x;
+end
+
+function y = helperRFImpairmentsLegacy(sig, radioImpairments, fs)
+% Legacy: comm.PhaseFrequencyOffset + comm.PhaseNoise using LUT MyI/Mrms/xI
+    fOff = comm.PhaseFrequencyOffset('FrequencyOffset', radioImpairments.FrequencyOffset,  'SampleRate', fs);
+    phaseNoise = helperGetPhaseNoise(radioImpairments);
+    phNoise = comm.PhaseNoise('Level', phaseNoise, 'FrequencyOffset', abs(radioImpairments.FrequencyOffset));
+    impFOff = fOff(sig);
+    impPhNoise = phNoise(impFOff);
+    y = impPhNoise + 10^(radioImpairments.DCOffset/10);
+end
+
+function [phaseNoise] = helperGetPhaseNoise(radioImpairments)
+% Legacy: get phase noise from LUT file Mrms.mat
+    try
+        S = load('Mrms.mat','Mrms','MyI','xI');
+        Mrms = S.Mrms; MyI = S.MyI; xI = S.xI;
+        [~, iRms] = min(abs(radioImpairments.PhaseNoise - Mrms));
+        [~, iFreqOffset] = min(abs(xI - abs(radioImpairments.FrequencyOffset)));
+        phaseNoise = -abs(MyI(iRms, iFreqOffset));
+    catch
+        phaseNoise = -80; % fallback dBc/Hz
+    end
 end
 
 %% Residual/dilated/inception/attention/LSTM/classifier builders
