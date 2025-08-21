@@ -236,21 +236,25 @@ for k = kValues
     invCounts = 1./max(counts,1);
     classWeights = invCounts / mean(invCounts);
 
-    % Per-sequence per-channel normalization (zero-mean, unit-variance)
+    % Global normalization across all sequences (more stable)
+    allTrainData = reshape(xTrainingFrames, [], 4);
+    allValData = reshape(xValFrames, [], 4);
+    allTestData = reshape(xTestFrames, [], 4);
+    
+    % Compute global statistics from training data only
+    globalMu = mean(allTrainData, 1, 'omitnan');
+    globalSigma = std(allTrainData, 0, 1, 'omitnan');
+    globalSigma(globalSigma < 1e-6) = 1;
+    
+    % Apply global normalization
     for i = 1:numTrain
-        Xi = xTrainingFrames(:,:,i);
-        mu = mean(Xi,1,'omitnan'); sigma = std(Xi,0,1,'omitnan'); sigma(sigma<1e-6) = 1;
-        xTrainingFrames(:,:,i) = (Xi - mu) ./ sigma;
+        xTrainingFrames(:,:,i) = (xTrainingFrames(:,:,i) - globalMu) ./ globalSigma;
     end
     for i = 1:numVal
-        Xi = xValFrames(:,:,i);
-        mu = mean(Xi,1,'omitnan'); sigma = std(Xi,0,1,'omitnan'); sigma(sigma<1e-6) = 1;
-        xValFrames(:,:,i) = (Xi - mu) ./ sigma;
+        xValFrames(:,:,i) = (xValFrames(:,:,i) - globalMu) ./ globalSigma;
     end
     for i = 1:numTest
-        Xi = xTestFrames(:,:,i);
-        mu = mean(Xi,1,'omitnan'); sigma = std(Xi,0,1,'omitnan'); sigma(sigma<1e-6) = 1;
-        xTestFrames(:,:,i) = (Xi - mu) ./ sigma;
+        xTestFrames(:,:,i) = (xTestFrames(:,:,i) - globalMu) ./ globalSigma;
     end
 
     % Convert to cell arrays for sequence networks: each cell [features(=4) x time(=frameLength)]
@@ -289,14 +293,14 @@ for k = kValues
 
     %% Build True ResNet + BiLSTM model with custom attention
     inputFeatureSize = 4;           % I, Q, |x|, dphi per time step
-    embedDim = 128;                 % Reduced from 256 to 128
+    embedDim = 192;                 % Increased from 128 to 192
     numClasses = numKnownRouters + 1; % include Unknown
 
     lgraph = layerGraph();
     [lgraph, inputName] = addInputLayer1D(lgraph, inputFeatureSize);
 
-    % Skip denoise block to reduce complexity
-    lastName = inputName;
+    % Optional denoise block for low SNR prior to stem
+    [lgraph, lastName] = addDenoiseBlock1D(lgraph, inputName);
     % Initial 1D Conv stem
     [lgraph, lastName] = addStem1D(lgraph, lastName);
 
@@ -309,8 +313,9 @@ for k = kValues
     % Channel alignment
     [lgraph, lastName] = addAlignBlock1D(lgraph, lastName, embedDim);
 
-    % Single inception block to reduce complexity
+    % Inception-style multi-branch temporal blocks to increase connectivity
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc1');
+    [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc2');
 
     % Temporal self-attention block
     [lgraph, lastName] = addSelfAttentionBlock(lgraph, lastName, embedDim);
@@ -322,20 +327,20 @@ for k = kValues
     [lgraph, lastName] = addClassifierHead(lgraph, lastName, numClasses, classNames, classWeights);
 
     %% Training options
-    miniBatchSize = 64;  % Reduced batch size
+    miniBatchSize = 96;  % Increased batch size
     iterPerEpoch = max(1, floor(numTrain/miniBatchSize));
     options = trainingOptions('adam', ...
-        'MaxEpochs', 30, ...  % Reduced epochs
+        'MaxEpochs', 40, ...  % Increased epochs
         'ValidationData', {XVal, yVal}, ...
-        'ValidationFrequency', max(1,ceil(iterPerEpoch/3)), ...
+        'ValidationFrequency', max(1,ceil(iterPerEpoch/2)), ...
         'Verbose', true, ...
-        'InitialLearnRate', 1e-4, ...  % Reduced learning rate
+        'InitialLearnRate', 2e-4, ...  % Increased learning rate
         'LearnRateSchedule', 'piecewise', ...
-        'LearnRateDropFactor', 0.7, ...
-        'LearnRateDropPeriod', 8, ...
+        'LearnRateDropFactor', 0.6, ...
+        'LearnRateDropPeriod', 12, ...
         'MiniBatchSize', miniBatchSize, ...
         'Shuffle', 'every-epoch', ...
-        'L2Regularization', 5e-4, ...  % Increased regularization
+        'L2Regularization', 2e-4, ...  % Reduced regularization
         'GradientThreshold', 1, ...
         'Plots', ternary(showTrainingPlot,'training-progress','none'), ...
         'OutputNetwork', 'best-validation', ...  % Use best validation model
