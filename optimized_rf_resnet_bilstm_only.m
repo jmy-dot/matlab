@@ -645,7 +645,7 @@ function [lgraph, outName] = addInceptionDilated1D(lgraph, inName, outChannels, 
 
     lgraph = connectLayers(lgraph, inName, [blockId '_match']);
     lgraph = connectLayers(lgraph, [blockId '_match_bn'], [addName '/in2']);
-    lgraph = connectLayers(lgraph, [blockId '_proj1_bn'], [addName '/in1']);
+    lgraph = connectLayers(lgraph, [blockId '_proj1_relu'], [addName '/in1']);
 
     outRelu = reluLayer('Name',[blockId '_out']);
     lgraph = addLayers(lgraph, outRelu);
