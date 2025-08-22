@@ -274,18 +274,25 @@ for k = kValues
         XTest{i} = Xi.';
     end
 
-    % Light data augmentation to prevent overfitting
+    % Moderate augmentation for robustness
     for i = 1:numTrain
         Xi = XTrain{i}; % [4 x T]
-        % Only mild phase jitter (reduced probability and magnitude)
-        if rand < 0.2
-            theta = (pi/180) * (randn*3); % Reduced from 6deg to 3deg
+        Tlen = size(Xi,2);
+        % Temporal mask (mild)
+        if rand < 0.2 && Tlen > 24
+            mlen = randi([6,16]);
+            t0 = randi([1, max(1, Tlen-mlen+1)]);
+            Xi(:, t0:min(Tlen, t0+mlen-1)) = 0;
+        end
+        % Phase jitter (moderate)
+        if rand < 0.35
+            theta = (pi/180) * (randn*4);
             R = [cos(theta) -sin(theta); sin(theta) cos(theta)];
             Xi(1:2,:) = R * Xi(1:2,:);
         end
-        % Very mild gain perturbation
-        if rand < 0.15
-            g = 10^(randn*0.01); % Reduced from 0.02 to 0.01
+        % Gain pertubation (moderate)
+        if rand < 0.25
+            g = 10^(randn*0.015);
             Xi(1:3,:) = Xi(1:3,:) * g;
         end
         XTrain{i} = Xi;
@@ -293,7 +300,7 @@ for k = kValues
 
     %% Build True ResNet + BiLSTM model with custom attention
     inputFeatureSize = 4;           % I, Q, |x|, dphi per time step
-    embedDim = 192;                 % Increased from 128 to 192
+    embedDim = 256;                 % Increased capacity for better accuracy
     numClasses = numKnownRouters + 1; % include Unknown
 
     lgraph = layerGraph();
@@ -343,7 +350,7 @@ for k = kValues
         'L2Regularization', 2e-4, ...  % Reduced regularization
         'GradientThreshold', 1, ...
         'Plots', ternary(showTrainingPlot,'training-progress','none'), ...
-        'OutputNetwork', 'best-validation', ...  % Use best validation model
+        'OutputNetwork', 'last-iteration', ...  % Ensure final results are from last epoch
         'ExecutionEnvironment', 'auto');
 
     %% Train and evaluate
