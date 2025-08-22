@@ -325,9 +325,8 @@ for k = kValues
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc1');
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc2');
 
-    % Two temporal self-attention blocks
+    % One temporal self-attention block
     [lgraph, lastName] = addSelfAttentionBlockWithId(lgraph, lastName, embedDim, 'attn1');
-    [lgraph, lastName] = addSelfAttentionBlockWithId(lgraph, lastName, embedDim, 'attn2');
 
     % BiLSTM stack
     [lgraph, lastName] = addBiLSTMStack(lgraph, lastName);
@@ -352,7 +351,7 @@ for k = kValues
         'L2Regularization', 2e-4, ...  % Reduced regularization
         'GradientThreshold', 1, ...
         'Plots', ternary(showTrainingPlot,'training-progress','none'), ...
-        'OutputNetwork', 'best-validation', ...  % Use best validation weights
+        'OutputNetwork', 'last-iteration', ...  % Use final epoch weights; we will also report best during training
         'ExecutionEnvironment', 'auto');
 
     %% Train and evaluate
