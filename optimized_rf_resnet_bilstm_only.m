@@ -692,7 +692,7 @@ function [lgraph, outName] = addClassifierHead(lgraph, inName, numClasses, class
         dropoutLayer(0.4, 'Name', 'head_drop')
         fullyConnectedLayer(numClasses, 'Name', 'fc_final')
         softmaxLayer('Name', 'softmax')
-        LabelSmoothingClassificationLayer(0.1, classNames, 'output')
+        LabelSmoothingClassificationLayer(0.1, 'output')
     ];
     lgraph = addLayers(lgraph, head);
     lgraph = connectLayers(lgraph, inName, 'fc1');

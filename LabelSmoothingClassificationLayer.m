@@ -1,23 +1,21 @@
 classdef LabelSmoothingClassificationLayer < nnet.layer.ClassificationLayer
     % LabelSmoothingClassificationLayer - Cross-entropy with label smoothing
-    % Usage: layer = LabelSmoothingClassificationLayer(epsilon, classNames, name)
+    % Usage: layer = LabelSmoothingClassificationLayer(epsilon, name)
 
     properties
         Epsilon (1,1) double {mustBeGreaterThanOrEqual(Epsilon,0), mustBeLessThan(Epsilon,1)} = 0.1
-        ClassNames
     end
 
     methods
-        function layer = LabelSmoothingClassificationLayer(epsilon, classNames, name)
+        function layer = LabelSmoothingClassificationLayer(epsilon, name)
             layer.Name = name;
             layer.Description = sprintf('Label-smoothed cross-entropy (epsilon=%.3f)', epsilon);
             layer.Epsilon = epsilon;
-            layer.ClassNames = classNames;
         end
 
         function loss = forwardLoss(layer, Y, T)
             % Y: dlarray [numClasses x batch]
-            % T: one-hot categorical targets [numClasses x batch]
+            % T: one-hot targets [numClasses x batch]
             eps = layer.Epsilon;
             numClasses = size(Y,1);
             % Smooth targets
