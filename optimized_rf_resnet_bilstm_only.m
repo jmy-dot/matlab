@@ -341,7 +341,7 @@ for k = kValues
         'ValidationData', {XVal, yVal}, ...
         'ValidationFrequency', max(1,ceil(iterPerEpoch/2)), ...
         'Verbose', true, ...
-        'InitialLearnRate', 2e-4, ...  % Increased learning rate
+        'InitialLearnRate', 3e-4, ...  % Slightly higher, works well with smoothing
         'LearnRateSchedule', 'piecewise', ...
         'LearnRateDropFactor', 0.6, ...
         'LearnRateDropPeriod', 12, ...
@@ -350,7 +350,7 @@ for k = kValues
         'L2Regularization', 2e-4, ...  % Reduced regularization
         'GradientThreshold', 1, ...
         'Plots', ternary(showTrainingPlot,'training-progress','none'), ...
-        'OutputNetwork', 'last-iteration', ...  % Ensure final results are from last epoch
+        'OutputNetwork', 'best-validation', ...  % Use best validation weights
         'ExecutionEnvironment', 'auto');
 
     %% Train and evaluate
@@ -691,7 +691,7 @@ function [lgraph, outName] = addClassifierHead(lgraph, inName, numClasses, class
         dropoutLayer(0.4, 'Name', 'head_drop')
         fullyConnectedLayer(numClasses, 'Name', 'fc_final')
         softmaxLayer('Name', 'softmax')
-        classificationLayer('Name', 'output', 'Classes', classNames, 'ClassWeights', classWeights')
+        LabelSmoothingClassificationLayer(0.1, classNames, 'output')
     ];
     lgraph = addLayers(lgraph, head);
     lgraph = connectLayers(lgraph, inName, 'fc1');
