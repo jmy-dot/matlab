@@ -26,10 +26,11 @@ showTrainingPlot = true;   % Show training-progress UI
 useLegacyImpairments = false; % true to use comm.PhaseNoise/PhaseFrequencyOffset + LUT
 useLegacyAlpha = false;       % true to use legacy alpha sampler (mu=1.5, [1.2,2.8])
 
-% Ensure custom layer class is accessible on path
-if exist('TemporalSelfAttentionLayer','class') ~= 8
+% Ensure custom layer classes are accessible on path
+if exist('TemporalSelfAttentionLayer','class') ~= 8 || exist('LabelSmoothingClassificationLayer','class') ~= 8
     try
         addpath(fileparts(mfilename('fullpath')));
+        rehash;
     catch
     end
 end
