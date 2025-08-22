@@ -325,8 +325,9 @@ for k = kValues
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc1');
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc2');
 
-    % Temporal self-attention block
-    [lgraph, lastName] = addSelfAttentionBlock(lgraph, lastName, embedDim);
+    % Two temporal self-attention blocks
+    [lgraph, lastName] = addSelfAttentionBlockWithId(lgraph, lastName, embedDim, 'attn1');
+    [lgraph, lastName] = addSelfAttentionBlockWithId(lgraph, lastName, embedDim, 'attn2');
 
     % BiLSTM stack
     [lgraph, lastName] = addBiLSTMStack(lgraph, lastName);
@@ -338,7 +339,7 @@ for k = kValues
     miniBatchSize = 96;  % Increased batch size
     iterPerEpoch = max(1, floor(numTrain/miniBatchSize));
     options = trainingOptions('adam', ...
-        'MaxEpochs', 40, ...  % Increased epochs
+        'MaxEpochs', 60, ...  % Increased epochs for convergence
         'ValidationData', {XVal, yVal}, ...
         'ValidationFrequency', max(1,ceil(iterPerEpoch/2)), ...
         'Verbose', true, ...
@@ -659,25 +660,23 @@ function [lgraph, outName] = addInceptionDilated1D(lgraph, inName, outChannels, 
     outName = [blockId '_out'];
 end
 
-function [lgraph, outName] = addSelfAttentionBlock(lgraph, inName, embedDim)
-% LayerNorm + custom self-attention + dropout
-    attn = [
-        layerNormalizationLayer('Name', 'pre_attn_norm')
-        TemporalSelfAttentionLayer(embedDim, 'self_attn')
-        dropoutLayer(0.1, 'Name', 'attn_drop')
-    ];
-    lgraph = addLayers(lgraph, attn);
-    lgraph = connectLayers(lgraph, inName, 'pre_attn_norm');
-    outName = 'attn_drop';
+function [lgraph, outName] = addSelfAttentionBlockWithId(lgraph, inName, embedDim, id)
+% LayerNorm + custom self-attention + dropout with unique names per id
+    pre = layerNormalizationLayer('Name', ['pre_attn_norm_' id]);
+    attn = TemporalSelfAttentionLayer(embedDim, ['self_attn_' id]);
+    drop = dropoutLayer(0.1, 'Name', ['attn_drop_' id]);
+    lgraph = addLayers(lgraph, [pre; attn; drop]);
+    lgraph = connectLayers(lgraph, inName, ['pre_attn_norm_' id]);
+    outName = ['attn_drop_' id];
 end
 
 function [lgraph, outName] = addBiLSTMStack(lgraph, inName)
 % Two-layer BiLSTM stack for temporal modeling
     rnn = [
-        bilstmLayer(192, 'OutputMode', 'sequence', 'Name', 'bilstm1')
-        dropoutLayer(0.3, 'Name', 'rnn_drop1')
-        bilstmLayer(128, 'OutputMode', 'last', 'Name', 'bilstm2')
-        dropoutLayer(0.3, 'Name', 'rnn_drop2')
+        bilstmLayer(256, 'OutputMode', 'sequence', 'Name', 'bilstm1')
+        dropoutLayer(0.35, 'Name', 'rnn_drop1')
+        bilstmLayer(192, 'OutputMode', 'last', 'Name', 'bilstm2')
+        dropoutLayer(0.35, 'Name', 'rnn_drop2')
     ];
     lgraph = addLayers(lgraph, rnn);
     lgraph = connectLayers(lgraph, inName, 'bilstm1');
