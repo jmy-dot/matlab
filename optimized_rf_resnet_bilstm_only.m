@@ -275,43 +275,28 @@ for k = kValues
         XTest{i} = Xi.';
     end
 
-    % Low SNR optimized augmentation
+    % Fast augmentation for low SNR robustness
     for i = 1:numTrain
         Xi = XTrain{i}; % [4 x T]
         Tlen = size(Xi,2);
         
         % Adaptive noise injection for low SNR robustness
-        if rand < 0.3
+        if rand < 0.25
             noiseLevel = 0.01 + 0.02 * rand;  % 0.01-0.03 noise level
             Xi = Xi + noiseLevel * randn(size(Xi));
         end
         
-        % Mild temporal mask for robustness (15% probability)
-        if rand < 0.15 && Tlen > 32
-            mlen = randi([6,12]);
-            t0 = randi([1, max(1, Tlen-mlen+1)]);
-            Xi(:, t0:min(Tlen, t0+mlen-1)) = 0;
-        end
-        
-        % Mild phase jitter (20% probability)
-        if rand < 0.2
+        % Mild phase jitter (15% probability)
+        if rand < 0.15
             theta = (pi/180) * (randn*3);  % ±3 degrees
             R = [cos(theta) -sin(theta); sin(theta) cos(theta)];
             Xi(1:2,:) = R * Xi(1:2,:);
         end
         
-        % Mild gain perturbation (20% probability)
-        if rand < 0.2
+        % Mild gain perturbation (15% probability)
+        if rand < 0.15
             g = 10^(randn*0.015);  % ±0.015 dB
             Xi(1:3,:) = Xi(1:3,:) * g;
-        end
-        
-        % Frequency offset simulation for low SNR robustness
-        if rand < 0.25
-            freqShift = (rand - 0.5) * 0.05;  % ±2.5% frequency shift
-            phaseShift = freqShift * (1:Tlen);
-            complexShift = exp(1j * phaseShift);
-            Xi(1:2,:) = Xi(1:2,:) .* [real(complexShift); imag(complexShift)];
         end
         
         XTrain{i} = Xi;
@@ -356,14 +341,14 @@ for k = kValues
     miniBatchSize = 96;  % Increased batch size
     iterPerEpoch = max(1, floor(numTrain/miniBatchSize));
     options = trainingOptions('adam', ...
-        'MaxEpochs', 80, ...  % More epochs for low SNR convergence
+        'MaxEpochs', 40, ...  % Reduced epochs for faster training
         'ValidationData', {XVal, yVal}, ...
         'ValidationFrequency', max(1,ceil(iterPerEpoch/2)), ...
         'Verbose', true, ...
-        'InitialLearnRate', 8e-4, ...  % Optimized learning rate for low SNR
+        'InitialLearnRate', 1.5e-3, ...  % Higher learning rate for faster convergence
         'LearnRateSchedule', 'piecewise', ...
-        'LearnRateDropFactor', 0.85, ...
-        'LearnRateDropPeriod', 8, ...
+        'LearnRateDropFactor', 0.8, ...
+        'LearnRateDropPeriod', 6, ...
         'MiniBatchSize', miniBatchSize, ...
         'Shuffle', 'every-epoch', ...
         'L2Regularization', 5e-5, ...  % Reduced regularization for low SNR
@@ -686,52 +671,44 @@ function [lgraph, outName] = addInceptionDilated1D(lgraph, inName, outChannels, 
 end
 
 function [lgraph, outName] = addEnhancedAttentionBlock(lgraph, inName, embedDim, id)
-% Low SNR optimized attention block with multi-scale temporal convolution
-    % Multi-scale temporal convolution for robust feature extraction
+% Fast attention block with single large kernel convolution
+    % Single large kernel temporal convolution for fast feature extraction
     attn_block = [
-        convolution1dLayer(15, embedDim, 'Padding', 'same', 'Name', ['attn_conv1_' id])
-        batchNormalizationLayer('Name', ['attn_bn1_' id])
-        reluLayer('Name', ['attn_relu1_' id])
-        convolution1dLayer(7, embedDim, 'Padding', 'same', 'Name', ['attn_conv2_' id])
-        batchNormalizationLayer('Name', ['attn_bn2_' id])
-        reluLayer('Name', ['attn_relu2_' id])
+        convolution1dLayer(11, embedDim, 'Padding', 'same', 'Name', ['attn_conv_' id])
+        batchNormalizationLayer('Name', ['attn_bn_' id])
+        reluLayer('Name', ['attn_relu_' id])
         dropoutLayer(0.1, 'Name', ['attn_drop_' id])
     ];
     
     % Add layers as a sequence
     lgraph = addLayers(lgraph, attn_block);
-    lgraph = connectLayers(lgraph, inName, ['attn_conv1_' id]);
+    lgraph = connectLayers(lgraph, inName, ['attn_conv_' id]);
     
     outName = ['attn_drop_' id];
 end
 
 function [lgraph, outName] = addBiLSTMStack(lgraph, inName)
-% Low SNR optimized three-layer BiLSTM stack for temporal modeling
+% Fast two-layer BiLSTM stack for temporal modeling
     rnn = [
-        bilstmLayer(320, 'OutputMode', 'sequence', 'Name', 'bilstm1')
+        bilstmLayer(256, 'OutputMode', 'sequence', 'Name', 'bilstm1')
         dropoutLayer(0.15, 'Name', 'rnn_drop1')
-        bilstmLayer(256, 'OutputMode', 'sequence', 'Name', 'bilstm2')
+        bilstmLayer(192, 'OutputMode', 'last', 'Name', 'bilstm2')
         dropoutLayer(0.15, 'Name', 'rnn_drop2')
-        bilstmLayer(192, 'OutputMode', 'last', 'Name', 'bilstm3')
-        dropoutLayer(0.15, 'Name', 'rnn_drop3')
     ];
     lgraph = addLayers(lgraph, rnn);
     lgraph = connectLayers(lgraph, inName, 'bilstm1');
-    outName = 'rnn_drop3';
+    outName = 'rnn_drop2';
 end
 
 function [lgraph, outName] = addClassifierHead(lgraph, inName, numClasses, classNames, classWeights)
-% Low SNR optimized dense head with class weights for imbalance mitigation
+% Fast dense head with class weights for imbalance mitigation
     head = [
-        fullyConnectedLayer(384, 'Name', 'fc1')
+        fullyConnectedLayer(256, 'Name', 'fc1')
         reluLayer('Name', 'relu_fc1')
         dropoutLayer(0.15, 'Name', 'head_drop1')
-        fullyConnectedLayer(256, 'Name', 'fc2')
+        fullyConnectedLayer(128, 'Name', 'fc2')
         reluLayer('Name', 'relu_fc2')
         dropoutLayer(0.15, 'Name', 'head_drop2')
-        fullyConnectedLayer(128, 'Name', 'fc3')
-        reluLayer('Name', 'relu_fc3')
-        dropoutLayer(0.15, 'Name', 'head_drop3')
         fullyConnectedLayer(numClasses, 'Name', 'fc_final')
         softmaxLayer('Name', 'softmax')
         LabelSmoothingClassificationLayer(0.1, 'output')
