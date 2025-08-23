@@ -275,27 +275,47 @@ for k = kValues
         XTest{i} = Xi.';
     end
 
-    % Moderate augmentation for robustness
+    % Enhanced augmentation for robustness
     for i = 1:numTrain
         Xi = XTrain{i}; % [4 x T]
         Tlen = size(Xi,2);
-        % Temporal mask (mild)
-        if rand < 0.2 && Tlen > 24
-            mlen = randi([6,16]);
+        
+        % Temporal mask (stronger)
+        if rand < 0.4 && Tlen > 24
+            mlen = randi([8,20]);
             t0 = randi([1, max(1, Tlen-mlen+1)]);
             Xi(:, t0:min(Tlen, t0+mlen-1)) = 0;
         end
-        % Phase jitter (moderate)
-        if rand < 0.35
-            theta = (pi/180) * (randn*4);
+        
+        % Time shift augmentation (±5% of sequence length)
+        if rand < 0.5
+            shiftAmount = round((rand - 0.5) * 0.1 * Tlen);
+            if shiftAmount > 0
+                Xi = [zeros(4, shiftAmount), Xi(:, 1:end-shiftAmount)];
+            else
+                Xi = [Xi(:, -shiftAmount+1:end), zeros(4, -shiftAmount)];
+            end
+        end
+        
+        % Phase jitter (stronger)
+        if rand < 0.5
+            theta = (pi/180) * (randn*6);
             R = [cos(theta) -sin(theta); sin(theta) cos(theta)];
             Xi(1:2,:) = R * Xi(1:2,:);
         end
-        % Gain pertubation (moderate)
-        if rand < 0.25
-            g = 10^(randn*0.015);
+        
+        % Gain perturbation (stronger)
+        if rand < 0.5
+            g = 10^(randn*0.025);
             Xi(1:3,:) = Xi(1:3,:) * g;
         end
+        
+        % Light additive noise
+        if rand < 0.3
+            noiseLevel = 0.02;
+            Xi = Xi + noiseLevel * randn(size(Xi));
+        end
+        
         XTrain{i} = Xi;
     end
 
@@ -325,8 +345,8 @@ for k = kValues
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc1');
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc2');
 
-    % One temporal self-attention block
-    [lgraph, lastName] = addSelfAttentionBlockWithId(lgraph, lastName, embedDim, 'attn1');
+    % Transformer encoder block
+    [lgraph, lastName] = addTransformerEncoderBlock(lgraph, lastName, embedDim, 'trans1');
 
     % BiLSTM stack
     [lgraph, lastName] = addBiLSTMStack(lgraph, lastName);
@@ -342,13 +362,13 @@ for k = kValues
         'ValidationData', {XVal, yVal}, ...
         'ValidationFrequency', max(1,ceil(iterPerEpoch/2)), ...
         'Verbose', true, ...
-        'InitialLearnRate', 3e-4, ...  % Slightly higher, works well with smoothing
+        'InitialLearnRate', 1e-3, ...  % Higher initial learning rate for faster convergence
         'LearnRateSchedule', 'piecewise', ...
-        'LearnRateDropFactor', 0.6, ...
-        'LearnRateDropPeriod', 12, ...
+        'LearnRateDropFactor', 0.7, ...
+        'LearnRateDropPeriod', 8, ...
         'MiniBatchSize', miniBatchSize, ...
         'Shuffle', 'every-epoch', ...
-        'L2Regularization', 2e-4, ...  % Reduced regularization
+        'L2Regularization', 1e-4, ...  % Reduced regularization for better fitting
         'GradientThreshold', 1, ...
         'Plots', ternary(showTrainingPlot,'training-progress','none'), ...
         'OutputNetwork', 'last-iteration', ...  % Use final epoch weights; we will also report best during training
@@ -363,9 +383,15 @@ for k = kValues
     [predTest, ~] = classify(simNet, XTest);
     testAcc = mean(predTest == yTest);
 
-    fprintf('Best Validation Accuracy (during training): %.2f%%\n', max(trainInfo.ValidationAccuracy));
+    % Find best validation accuracy during training
+    bestValAcc = max(trainInfo.ValidationAccuracy);
+    bestEpoch = find(trainInfo.ValidationAccuracy == bestValAcc, 1);
+    
+    fprintf('Best Validation Accuracy (epoch %d): %.2f%%\n', bestEpoch, bestValAcc);
     fprintf('Final Validation Accuracy: %.2f%%\n', valAcc*100);
     fprintf('Final Test Accuracy: %.2f%%\n', testAcc*100);
+    fprintf('Training Loss Trend: %.4f -> %.4f\n', trainInfo.TrainingLoss(1), trainInfo.TrainingLoss(end));
+    fprintf('Validation Loss Trend: %.4f -> %.4f\n', trainInfo.ValidationLoss(1), trainInfo.ValidationLoss(end));
 
 end
 end
@@ -659,14 +685,47 @@ function [lgraph, outName] = addInceptionDilated1D(lgraph, inName, outChannels, 
     outName = [blockId '_out'];
 end
 
-function [lgraph, outName] = addSelfAttentionBlockWithId(lgraph, inName, embedDim, id)
-% LayerNorm + custom self-attention + dropout with unique names per id
-    pre = layerNormalizationLayer('Name', ['pre_attn_norm_' id]);
-    attn = TemporalSelfAttentionLayer(embedDim, ['self_attn_' id]);
-    drop = dropoutLayer(0.1, 'Name', ['attn_drop_' id]);
-    lgraph = addLayers(lgraph, [pre; attn; drop]);
-    lgraph = connectLayers(lgraph, inName, ['pre_attn_norm_' id]);
-    outName = ['attn_drop_' id];
+function [lgraph, outName] = addTransformerEncoderBlock(lgraph, inName, embedDim, id)
+% Full Transformer encoder block with multi-head attention and FFN
+    % Pre-norm
+    pre_norm = layerNormalizationLayer('Name', ['pre_norm_' id]);
+    
+    % Multi-head self-attention
+    attn = multiheadAttentionLayer(embedDim, 8, 'Name', ['mha_' id]); % 8 heads
+    attn_drop = dropoutLayer(0.1, 'Name', ['attn_drop_' id]);
+    attn_add = additionLayer(2, 'Name', ['attn_add_' id]);
+    
+    % Post-attention norm
+    post_norm = layerNormalizationLayer('Name', ['post_norm_' id]);
+    
+    % Feed-forward network
+    ffn1 = fullyConnectedLayer(embedDim * 4, 'Name', ['ffn1_' id]);
+    ffn_relu = reluLayer('Name', ['ffn_relu_' id]);
+    ffn2 = fullyConnectedLayer(embedDim, 'Name', ['ffn2_' id]);
+    ffn_drop = dropoutLayer(0.1, 'Name', ['ffn_drop_' id]);
+    ffn_add = additionLayer(2, 'Name', ['ffn_add_' id]);
+    
+    % Add all layers
+    lgraph = addLayers(lgraph, [pre_norm; attn; attn_drop; attn_add; 
+                                post_norm; ffn1; ffn_relu; ffn2; ffn_drop; ffn_add]);
+    
+    % Connect attention residual
+    lgraph = connectLayers(lgraph, inName, ['pre_norm_' id]);
+    lgraph = connectLayers(lgraph, ['pre_norm_' id], ['mha_' id]);
+    lgraph = connectLayers(lgraph, ['mha_' id], ['attn_drop_' id]);
+    lgraph = connectLayers(lgraph, inName, ['attn_add_' id '/in1']);
+    lgraph = connectLayers(lgraph, ['attn_drop_' id], ['attn_add_' id '/in2']);
+    
+    % Connect FFN residual
+    lgraph = connectLayers(lgraph, ['attn_add_' id], ['post_norm_' id]);
+    lgraph = connectLayers(lgraph, ['post_norm_' id], ['ffn1_' id]);
+    lgraph = connectLayers(lgraph, ['ffn1_' id], ['ffn_relu_' id]);
+    lgraph = connectLayers(lgraph, ['ffn_relu_' id], ['ffn2_' id]);
+    lgraph = connectLayers(lgraph, ['ffn2_' id], ['ffn_drop_' id]);
+    lgraph = connectLayers(lgraph, ['attn_add_' id], ['ffn_add_' id '/in1']);
+    lgraph = connectLayers(lgraph, ['ffn_drop_' id], ['ffn_add_' id '/in2']);
+    
+    outName = ['ffn_add_' id];
 end
 
 function [lgraph, outName] = addBiLSTMStack(lgraph, inName)
