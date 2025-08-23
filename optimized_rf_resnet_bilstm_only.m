@@ -686,12 +686,25 @@ function [lgraph, outName] = addInceptionDilated1D(lgraph, inName, outChannels, 
 end
 
 function [lgraph, outName] = addTransformerEncoderBlock(lgraph, inName, embedDim, id)
-% Full Transformer encoder block with multi-head attention and FFN
+% Enhanced attention block with convolutional attention and FFN
     % Pre-norm
     pre_norm = layerNormalizationLayer('Name', ['pre_norm_' id]);
     
-    % Multi-head self-attention
-    attn = multiheadAttentionLayer(embedDim, 8, 'Name', ['mha_' id]); % 8 heads
+    % Convolutional attention (1D conv with large kernel for temporal attention)
+    attn_conv1 = convolution1dLayer(7, embedDim, 'Padding', 'same', 'Name', ['attn_conv1_' id]);
+    attn_bn1 = batchNormalizationLayer('Name', ['attn_bn1_' id]);
+    attn_relu1 = reluLayer('Name', ['attn_relu1_' id]);
+    
+    attn_conv2 = convolution1dLayer(5, embedDim, 'Padding', 'same', 'Name', ['attn_conv2_' id]);
+    attn_bn2 = batchNormalizationLayer('Name', ['attn_bn2_' id]);
+    attn_relu2 = reluLayer('Name', ['attn_relu2_' id]);
+    
+    attn_conv3 = convolution1dLayer(3, embedDim, 'Padding', 'same', 'Name', ['attn_conv3_' id]);
+    attn_bn3 = batchNormalizationLayer('Name', ['attn_bn3_' id]);
+    
+    % Concatenate multi-scale features
+    attn_concat = depthConcatenationLayer(3, 'Name', ['attn_concat_' id]);
+    attn_proj = convolution1dLayer(1, embedDim, 'Name', ['attn_proj_' id]);
     attn_drop = dropoutLayer(0.1, 'Name', ['attn_drop_' id]);
     attn_add = additionLayer(2, 'Name', ['attn_add_' id]);
     
@@ -706,13 +719,21 @@ function [lgraph, outName] = addTransformerEncoderBlock(lgraph, inName, embedDim
     ffn_add = additionLayer(2, 'Name', ['ffn_add_' id]);
     
     % Add all layers
-    lgraph = addLayers(lgraph, [pre_norm; attn; attn_drop; attn_add; 
+    lgraph = addLayers(lgraph, [pre_norm; attn_conv1; attn_bn1; attn_relu1; 
+                                attn_conv2; attn_bn2; attn_relu2; attn_conv3; attn_bn3;
+                                attn_concat; attn_proj; attn_drop; attn_add;
                                 post_norm; ffn1; ffn_relu; ffn2; ffn_drop; ffn_add]);
     
     % Connect attention residual
     lgraph = connectLayers(lgraph, inName, ['pre_norm_' id]);
-    lgraph = connectLayers(lgraph, ['pre_norm_' id], ['mha_' id]);
-    lgraph = connectLayers(lgraph, ['mha_' id], ['attn_drop_' id]);
+    lgraph = connectLayers(lgraph, ['pre_norm_' id], ['attn_conv1_' id]);
+    lgraph = connectLayers(lgraph, ['pre_norm_' id], ['attn_conv2_' id]);
+    lgraph = connectLayers(lgraph, ['pre_norm_' id], ['attn_conv3_' id]);
+    lgraph = connectLayers(lgraph, ['attn_relu1_' id], ['attn_concat_' id '/in1']);
+    lgraph = connectLayers(lgraph, ['attn_relu2_' id], ['attn_concat_' id '/in2']);
+    lgraph = connectLayers(lgraph, ['attn_bn3_' id], ['attn_concat_' id '/in3']);
+    lgraph = connectLayers(lgraph, ['attn_concat_' id], ['attn_proj_' id]);
+    lgraph = connectLayers(lgraph, ['attn_proj_' id], ['attn_drop_' id]);
     lgraph = connectLayers(lgraph, inName, ['attn_add_' id '/in1']);
     lgraph = connectLayers(lgraph, ['attn_drop_' id], ['attn_add_' id '/in2']);
     
