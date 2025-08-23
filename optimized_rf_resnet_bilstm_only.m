@@ -319,7 +319,8 @@ for k = kValues
         % Frequency shift simulation
         if rand < 0.3
             freqShift = (rand - 0.5) * 0.1;
-            Xi(1:2,:) = Xi(1:2,:) * exp(1j * freqShift * (1:Tlen));
+            phaseShift = freqShift * (1:Tlen);
+            Xi(1:2,:) = Xi(1:2,:) .* exp(1j * phaseShift);
         end
         
         XTrain{i} = Xi;
