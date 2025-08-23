@@ -458,54 +458,27 @@ end
 
 function [lgraph, outName] = addFourierDenoiseBlock1D(lgraph, inName)
 % Fourier domain denoising block for low SNR signals
-    % Real FFT-based denoising with learnable parameters
+    % Simple FFT-based denoising with post-processing
     denoise_block = [
         % Stage 1: Real FFT denoising layer
         FourierDenoiseLayer('fourier_denoise')
         
         % Stage 2: Post-processing refinement
-        convolution1dLayer(5, 16, 'Padding', 'same', 'Name', 'denoise_conv1')
-        batchNormalizationLayer('Name', 'denoise_bn1')
-        reluLayer('Name', 'denoise_relu1')
-        
-        % Stage 3: Final refinement
-        convolution1dLayer(3, 8, 'Padding', 'same', 'Name', 'denoise_conv2')
-        batchNormalizationLayer('Name', 'denoise_bn2')
-        reluLayer('Name', 'denoise_relu2')
+        convolution1dLayer(5, 8, 'Padding', 'same', 'Name', 'denoise_conv')
+        batchNormalizationLayer('Name', 'denoise_bn')
+        reluLayer('Name', 'denoise_relu')
     ];
     
-    % Match input channels to output channels
-    match_block = [
-        convolution1dLayer(1, 8, 'Padding', 'same', 'Name', 'denoise_match')
-        batchNormalizationLayer('Name', 'denoise_match_bn')
-    ];
+    % Add layers as a sequence
+    lgraph = addLayers(lgraph, denoise_block);
     
-    % Residual addition
-    add_layer = additionLayer(2, 'Name', 'denoise_add');
-    out_relu = reluLayer('Name', 'denoise_out');
-    
-    % Add all layers
-    lgraph = addLayers(lgraph, [denoise_block; match_block; add_layer; out_relu]);
-    
-    % Connect denoising path
+    % Connect layers
     lgraph = connectLayers(lgraph, inName, 'fourier_denoise');
-    lgraph = connectLayers(lgraph, 'fourier_denoise', 'denoise_conv1');
-    lgraph = connectLayers(lgraph, 'denoise_conv1', 'denoise_bn1');
-    lgraph = connectLayers(lgraph, 'denoise_bn1', 'denoise_relu1');
-    lgraph = connectLayers(lgraph, 'denoise_relu1', 'denoise_conv2');
-    lgraph = connectLayers(lgraph, 'denoise_conv2', 'denoise_bn2');
-    lgraph = connectLayers(lgraph, 'denoise_bn2', 'denoise_relu2');
+    lgraph = connectLayers(lgraph, 'fourier_denoise', 'denoise_conv');
+    lgraph = connectLayers(lgraph, 'denoise_conv', 'denoise_bn');
+    lgraph = connectLayers(lgraph, 'denoise_bn', 'denoise_relu');
     
-    % Connect residual path
-    lgraph = connectLayers(lgraph, inName, 'denoise_match');
-    lgraph = connectLayers(lgraph, 'denoise_match', 'denoise_match_bn');
-    
-    % Connect residual addition
-    lgraph = connectLayers(lgraph, 'denoise_relu2', 'denoise_add/in1');
-    lgraph = connectLayers(lgraph, 'denoise_match_bn', 'denoise_add/in2');
-    lgraph = connectLayers(lgraph, 'denoise_add', 'denoise_out');
-    
-    outName = 'denoise_out';
+    outName = 'denoise_relu';
 end
 
 function [lgraph, outName] = addStem1D(lgraph, inputName)
