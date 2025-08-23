@@ -686,30 +686,20 @@ function [lgraph, outName] = addInceptionDilated1D(lgraph, inName, outChannels, 
 end
 
 function [lgraph, outName] = addEnhancedAttentionBlock(lgraph, inName, embedDim, id)
-% Enhanced attention block with temporal convolution and residual connection
+% Enhanced attention block with temporal convolution (sequential layers)
     % Large kernel temporal convolution for attention
-    attn_conv = convolution1dLayer(11, embedDim, 'Padding', 'same', 'Name', ['attn_conv_' id]);
-    attn_bn = batchNormalizationLayer('Name', ['attn_bn_' id]);
-    attn_relu = reluLayer('Name', ['attn_relu_' id]);
-    attn_drop = dropoutLayer(0.15, 'Name', ['attn_drop_' id]);
+    attn_block = [
+        convolution1dLayer(11, embedDim, 'Padding', 'same', 'Name', ['attn_conv_' id])
+        batchNormalizationLayer('Name', ['attn_bn_' id])
+        reluLayer('Name', ['attn_relu_' id])
+        dropoutLayer(0.15, 'Name', ['attn_drop_' id])
+    ];
     
-    % Residual connection
-    attn_add = additionLayer(2, 'Name', ['attn_add_' id]);
-    
-    % Add layers
-    lgraph = addLayers(lgraph, [attn_conv; attn_bn; attn_relu; attn_drop; attn_add]);
-    
-    % Connect layers
+    % Add layers as a sequence
+    lgraph = addLayers(lgraph, attn_block);
     lgraph = connectLayers(lgraph, inName, ['attn_conv_' id]);
-    lgraph = connectLayers(lgraph, ['attn_conv_' id], ['attn_bn_' id]);
-    lgraph = connectLayers(lgraph, ['attn_bn_' id], ['attn_relu_' id]);
-    lgraph = connectLayers(lgraph, ['attn_relu_' id], ['attn_drop_' id]);
     
-    % Connect residual
-    lgraph = connectLayers(lgraph, inName, ['attn_add_' id '/in1']);
-    lgraph = connectLayers(lgraph, ['attn_drop_' id], ['attn_add_' id '/in2']);
-    
-    outName = ['attn_add_' id];
+    outName = ['attn_drop_' id];
 end
 
 function [lgraph, outName] = addBiLSTMStack(lgraph, inName)
