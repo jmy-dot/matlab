@@ -316,11 +316,12 @@ for k = kValues
             Xi = Xi + noiseLevel * randn(size(Xi));
         end
         
-        % Frequency shift simulation
+        % Frequency shift simulation (real-valued)
         if rand < 0.3
             freqShift = (rand - 0.5) * 0.1;
             phaseShift = freqShift * (1:Tlen);
-            Xi(1:2,:) = Xi(1:2,:) .* exp(1j * phaseShift);
+            complexShift = exp(1j * phaseShift);
+            Xi(1:2,:) = Xi(1:2,:) .* [real(complexShift); imag(complexShift)];
         end
         
         XTrain{i} = Xi;
