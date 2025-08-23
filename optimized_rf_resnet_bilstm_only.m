@@ -275,29 +275,43 @@ for k = kValues
         XTest{i} = Xi.';
     end
 
-    % Minimal augmentation for stability
+    % Low SNR optimized augmentation
     for i = 1:numTrain
         Xi = XTrain{i}; % [4 x T]
         Tlen = size(Xi,2);
         
-        % Very mild temporal mask (only 5% probability)
-        if rand < 0.05 && Tlen > 32
-            mlen = randi([4,8]);
+        % Adaptive noise injection for low SNR robustness
+        if rand < 0.3
+            noiseLevel = 0.01 + 0.02 * rand;  % 0.01-0.03 noise level
+            Xi = Xi + noiseLevel * randn(size(Xi));
+        end
+        
+        % Mild temporal mask for robustness (15% probability)
+        if rand < 0.15 && Tlen > 32
+            mlen = randi([6,12]);
             t0 = randi([1, max(1, Tlen-mlen+1)]);
             Xi(:, t0:min(Tlen, t0+mlen-1)) = 0;
         end
         
-        % Very mild phase jitter (only 10% probability)
-        if rand < 0.1
-            theta = (pi/180) * (randn*2);  % Only ±2 degrees
+        % Mild phase jitter (20% probability)
+        if rand < 0.2
+            theta = (pi/180) * (randn*3);  % ±3 degrees
             R = [cos(theta) -sin(theta); sin(theta) cos(theta)];
             Xi(1:2,:) = R * Xi(1:2,:);
         end
         
-        % Very mild gain perturbation (only 10% probability)
-        if rand < 0.1
-            g = 10^(randn*0.01);  % Only ±0.01 dB
+        % Mild gain perturbation (20% probability)
+        if rand < 0.2
+            g = 10^(randn*0.015);  % ±0.015 dB
             Xi(1:3,:) = Xi(1:3,:) * g;
+        end
+        
+        % Frequency offset simulation for low SNR robustness
+        if rand < 0.25
+            freqShift = (rand - 0.5) * 0.05;  % ±2.5% frequency shift
+            phaseShift = freqShift * (1:Tlen);
+            complexShift = exp(1j * phaseShift);
+            Xi(1:2,:) = Xi(1:2,:) .* [real(complexShift); imag(complexShift)];
         end
         
         XTrain{i} = Xi;
@@ -342,20 +356,20 @@ for k = kValues
     miniBatchSize = 96;  % Increased batch size
     iterPerEpoch = max(1, floor(numTrain/miniBatchSize));
     options = trainingOptions('adam', ...
-        'MaxEpochs', 50, ...  % Reduced epochs for faster training
+        'MaxEpochs', 80, ...  % More epochs for low SNR convergence
         'ValidationData', {XVal, yVal}, ...
         'ValidationFrequency', max(1,ceil(iterPerEpoch/2)), ...
         'Verbose', true, ...
-        'InitialLearnRate', 5e-4, ...  % Lower, more stable learning rate
+        'InitialLearnRate', 8e-4, ...  % Optimized learning rate for low SNR
         'LearnRateSchedule', 'piecewise', ...
-        'LearnRateDropFactor', 0.9, ...
-        'LearnRateDropPeriod', 10, ...
+        'LearnRateDropFactor', 0.85, ...
+        'LearnRateDropPeriod', 8, ...
         'MiniBatchSize', miniBatchSize, ...
         'Shuffle', 'every-epoch', ...
-        'L2Regularization', 1e-4, ...  % Moderate regularization
+        'L2Regularization', 5e-5, ...  % Reduced regularization for low SNR
         'GradientThreshold', 1, ...
         'Plots', ternary(showTrainingPlot,'training-progress','none'), ...
-        'OutputNetwork', 'last-iteration', ...  % Use final epoch weights; we will also report best during training
+        'OutputNetwork', 'best-validation', ...  % Use best validation weights for final result
         'ExecutionEnvironment', 'auto');
 
     %% Train and evaluate
@@ -372,10 +386,12 @@ for k = kValues
     bestEpoch = find(trainInfo.ValidationAccuracy == bestValAcc, 1);
     
     fprintf('Best Validation Accuracy (epoch %d): %.2f%%\n', bestEpoch, bestValAcc);
-    fprintf('Final Validation Accuracy: %.2f%%\n', valAcc*100);
-    fprintf('Final Test Accuracy: %.2f%%\n', testAcc*100);
+    fprintf('Final Validation Accuracy (best model): %.2f%%\n', valAcc*100);
+    fprintf('Final Test Accuracy (best model): %.2f%%\n', testAcc*100);
     fprintf('Training Loss Trend: %.4f -> %.4f\n', trainInfo.TrainingLoss(1), trainInfo.TrainingLoss(end));
     fprintf('Validation Loss Trend: %.4f -> %.4f\n', trainInfo.ValidationLoss(1), trainInfo.ValidationLoss(end));
+    fprintf('Final Training Accuracy: %.2f%%\n', trainInfo.TrainingAccuracy(end));
+    fprintf('Final Validation Accuracy (last epoch): %.2f%%\n', trainInfo.ValidationAccuracy(end));
 
 end
 end
@@ -670,57 +686,52 @@ function [lgraph, outName] = addInceptionDilated1D(lgraph, inName, outChannels, 
 end
 
 function [lgraph, outName] = addEnhancedAttentionBlock(lgraph, inName, embedDim, id)
-% Enhanced attention block with temporal convolution (sequential layers)
-    % Different kernel sizes for different attention blocks
-    if contains(id, 'attn1')
-        kernelSize = 7;
-    elseif contains(id, 'attn2')
-        kernelSize = 9;
-    elseif contains(id, 'attn3')
-        kernelSize = 11;
-    elseif contains(id, 'attn4')
-        kernelSize = 13;
-    else
-        kernelSize = 15;
-    end
-    
-    % Large kernel temporal convolution for attention
+% Low SNR optimized attention block with multi-scale temporal convolution
+    % Multi-scale temporal convolution for robust feature extraction
     attn_block = [
-        convolution1dLayer(kernelSize, embedDim, 'Padding', 'same', 'Name', ['attn_conv_' id])
-        batchNormalizationLayer('Name', ['attn_bn_' id])
-        reluLayer('Name', ['attn_relu_' id])
-        dropoutLayer(0.12, 'Name', ['attn_drop_' id])
+        convolution1dLayer(15, embedDim, 'Padding', 'same', 'Name', ['attn_conv1_' id])
+        batchNormalizationLayer('Name', ['attn_bn1_' id])
+        reluLayer('Name', ['attn_relu1_' id])
+        convolution1dLayer(7, embedDim, 'Padding', 'same', 'Name', ['attn_conv2_' id])
+        batchNormalizationLayer('Name', ['attn_bn2_' id])
+        reluLayer('Name', ['attn_relu2_' id])
+        dropoutLayer(0.1, 'Name', ['attn_drop_' id])
     ];
     
     % Add layers as a sequence
     lgraph = addLayers(lgraph, attn_block);
-    lgraph = connectLayers(lgraph, inName, ['attn_conv_' id]);
+    lgraph = connectLayers(lgraph, inName, ['attn_conv1_' id]);
     
     outName = ['attn_drop_' id];
 end
 
 function [lgraph, outName] = addBiLSTMStack(lgraph, inName)
-% Simple two-layer BiLSTM stack for temporal modeling
+% Low SNR optimized three-layer BiLSTM stack for temporal modeling
     rnn = [
-        bilstmLayer(256, 'OutputMode', 'sequence', 'Name', 'bilstm1')
-        dropoutLayer(0.2, 'Name', 'rnn_drop1')
-        bilstmLayer(128, 'OutputMode', 'last', 'Name', 'bilstm2')
-        dropoutLayer(0.2, 'Name', 'rnn_drop2')
+        bilstmLayer(320, 'OutputMode', 'sequence', 'Name', 'bilstm1')
+        dropoutLayer(0.15, 'Name', 'rnn_drop1')
+        bilstmLayer(256, 'OutputMode', 'sequence', 'Name', 'bilstm2')
+        dropoutLayer(0.15, 'Name', 'rnn_drop2')
+        bilstmLayer(192, 'OutputMode', 'last', 'Name', 'bilstm3')
+        dropoutLayer(0.15, 'Name', 'rnn_drop3')
     ];
     lgraph = addLayers(lgraph, rnn);
     lgraph = connectLayers(lgraph, inName, 'bilstm1');
-    outName = 'rnn_drop2';
+    outName = 'rnn_drop3';
 end
 
 function [lgraph, outName] = addClassifierHead(lgraph, inName, numClasses, classNames, classWeights)
-% Simple dense head with class weights for imbalance mitigation
+% Low SNR optimized dense head with class weights for imbalance mitigation
     head = [
-        fullyConnectedLayer(256, 'Name', 'fc1')
+        fullyConnectedLayer(384, 'Name', 'fc1')
         reluLayer('Name', 'relu_fc1')
-        dropoutLayer(0.2, 'Name', 'head_drop1')
-        fullyConnectedLayer(128, 'Name', 'fc2')
+        dropoutLayer(0.15, 'Name', 'head_drop1')
+        fullyConnectedLayer(256, 'Name', 'fc2')
         reluLayer('Name', 'relu_fc2')
-        dropoutLayer(0.2, 'Name', 'head_drop2')
+        dropoutLayer(0.15, 'Name', 'head_drop2')
+        fullyConnectedLayer(128, 'Name', 'fc3')
+        reluLayer('Name', 'relu_fc3')
+        dropoutLayer(0.15, 'Name', 'head_drop3')
         fullyConnectedLayer(numClasses, 'Name', 'fc_final')
         softmaxLayer('Name', 'softmax')
         LabelSmoothingClassificationLayer(0.1, 'output')
