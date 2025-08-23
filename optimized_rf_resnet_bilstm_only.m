@@ -340,10 +340,8 @@ for k = kValues
     lgraph = layerGraph();
     [lgraph, inputName] = addInputLayer1D(lgraph, inputFeatureSize);
 
-    % Optional denoise block for low SNR prior to stem
-    [lgraph, lastName] = addEnhancedDenoiseBlock1D(lgraph, inputName);
-    % Initial 1D Conv stem
-    [lgraph, lastName] = addStem1D(lgraph, lastName);
+    % Initial 1D Conv stem (removed denoise block to avoid connection conflicts)
+    [lgraph, lastName] = addStem1D(lgraph, inputName);
 
     % ResNet backbone
     [lgraph, lastName] = addResNetBackbone1D(lgraph, lastName, embedDim);
