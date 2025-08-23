@@ -237,17 +237,17 @@ for k = kValues
     invCounts = 1./max(counts,1);
     classWeights = invCounts / mean(invCounts);
 
-    % Global normalization across all sequences (more stable)
+    % Enhanced normalization with robust statistics
     allTrainData = reshape(xTrainingFrames, [], 4);
     allValData = reshape(xValFrames, [], 4);
     allTestData = reshape(xTestFrames, [], 4);
     
-    % Compute global statistics from training data only
-    globalMu = mean(allTrainData, 1, 'omitnan');
-    globalSigma = std(allTrainData, 0, 1, 'omitnan');
+    % Compute robust statistics from training data only
+    globalMu = median(allTrainData, 1, 'omitnan');  % Use median for robustness
+    globalSigma = mad(allTrainData, 1, 1) * 1.4826;  % Median absolute deviation
     globalSigma(globalSigma < 1e-6) = 1;
     
-    % Apply global normalization
+    % Apply robust normalization
     for i = 1:numTrain
         xTrainingFrames(:,:,i) = (xTrainingFrames(:,:,i) - globalMu) ./ globalSigma;
     end
@@ -353,10 +353,12 @@ for k = kValues
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc1');
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc2');
 
-    % Multiple enhanced attention blocks
+    % Multiple enhanced attention blocks with different kernel sizes
     [lgraph, lastName] = addEnhancedAttentionBlock(lgraph, lastName, embedDim, 'attn1');
     [lgraph, lastName] = addEnhancedAttentionBlock(lgraph, lastName, embedDim, 'attn2');
     [lgraph, lastName] = addEnhancedAttentionBlock(lgraph, lastName, embedDim, 'attn3');
+    [lgraph, lastName] = addEnhancedAttentionBlock(lgraph, lastName, embedDim, 'attn4');
+    [lgraph, lastName] = addEnhancedAttentionBlock(lgraph, lastName, embedDim, 'attn5');
 
     % BiLSTM stack
     [lgraph, lastName] = addBiLSTMStack(lgraph, lastName);
@@ -368,17 +370,17 @@ for k = kValues
     miniBatchSize = 96;  % Increased batch size
     iterPerEpoch = max(1, floor(numTrain/miniBatchSize));
     options = trainingOptions('adam', ...
-        'MaxEpochs', 80, ...  % Increased epochs for convergence
+        'MaxEpochs', 100, ...  % Increased epochs for convergence
         'ValidationData', {XVal, yVal}, ...
         'ValidationFrequency', max(1,ceil(iterPerEpoch/2)), ...
         'Verbose', true, ...
-        'InitialLearnRate', 2e-3, ...  % Higher initial learning rate for faster convergence
+        'InitialLearnRate', 3e-3, ...  % Higher initial learning rate for faster convergence
         'LearnRateSchedule', 'piecewise', ...
-        'LearnRateDropFactor', 0.8, ...
-        'LearnRateDropPeriod', 6, ...
+        'LearnRateDropFactor', 0.85, ...
+        'LearnRateDropPeriod', 5, ...
         'MiniBatchSize', miniBatchSize, ...
         'Shuffle', 'every-epoch', ...
-        'L2Regularization', 5e-5, ...  % Reduced regularization for better fitting
+        'L2Regularization', 1e-5, ...  % Reduced regularization for better fitting
         'GradientThreshold', 1, ...
         'Plots', ternary(showTrainingPlot,'training-progress','none'), ...
         'OutputNetwork', 'last-iteration', ...  % Use final epoch weights; we will also report best during training
@@ -697,12 +699,25 @@ end
 
 function [lgraph, outName] = addEnhancedAttentionBlock(lgraph, inName, embedDim, id)
 % Enhanced attention block with temporal convolution (sequential layers)
+    % Different kernel sizes for different attention blocks
+    if contains(id, 'attn1')
+        kernelSize = 7;
+    elseif contains(id, 'attn2')
+        kernelSize = 9;
+    elseif contains(id, 'attn3')
+        kernelSize = 11;
+    elseif contains(id, 'attn4')
+        kernelSize = 13;
+    else
+        kernelSize = 15;
+    end
+    
     % Large kernel temporal convolution for attention
     attn_block = [
-        convolution1dLayer(11, embedDim, 'Padding', 'same', 'Name', ['attn_conv_' id])
+        convolution1dLayer(kernelSize, embedDim, 'Padding', 'same', 'Name', ['attn_conv_' id])
         batchNormalizationLayer('Name', ['attn_bn_' id])
         reluLayer('Name', ['attn_relu_' id])
-        dropoutLayer(0.15, 'Name', ['attn_drop_' id])
+        dropoutLayer(0.12, 'Name', ['attn_drop_' id])
     ];
     
     % Add layers as a sequence
@@ -713,29 +728,34 @@ function [lgraph, outName] = addEnhancedAttentionBlock(lgraph, inName, embedDim,
 end
 
 function [lgraph, outName] = addBiLSTMStack(lgraph, inName)
-% Three-layer BiLSTM stack for temporal modeling
+% Four-layer BiLSTM stack for temporal modeling
     rnn = [
-        bilstmLayer(320, 'OutputMode', 'sequence', 'Name', 'bilstm1')
-        dropoutLayer(0.3, 'Name', 'rnn_drop1')
-        bilstmLayer(256, 'OutputMode', 'sequence', 'Name', 'bilstm2')
-        dropoutLayer(0.3, 'Name', 'rnn_drop2')
-        bilstmLayer(192, 'OutputMode', 'last', 'Name', 'bilstm3')
-        dropoutLayer(0.3, 'Name', 'rnn_drop3')
+        bilstmLayer(384, 'OutputMode', 'sequence', 'Name', 'bilstm1')
+        dropoutLayer(0.25, 'Name', 'rnn_drop1')
+        bilstmLayer(320, 'OutputMode', 'sequence', 'Name', 'bilstm2')
+        dropoutLayer(0.25, 'Name', 'rnn_drop2')
+        bilstmLayer(256, 'OutputMode', 'sequence', 'Name', 'bilstm3')
+        dropoutLayer(0.25, 'Name', 'rnn_drop3')
+        bilstmLayer(192, 'OutputMode', 'last', 'Name', 'bilstm4')
+        dropoutLayer(0.25, 'Name', 'rnn_drop4')
     ];
     lgraph = addLayers(lgraph, rnn);
     lgraph = connectLayers(lgraph, inName, 'bilstm1');
-    outName = 'rnn_drop3';
+    outName = 'rnn_drop4';
 end
 
 function [lgraph, outName] = addClassifierHead(lgraph, inName, numClasses, classNames, classWeights)
 % Dense head with class weights for imbalance mitigation
     head = [
-        fullyConnectedLayer(384, 'Name', 'fc1')
+        fullyConnectedLayer(512, 'Name', 'fc1')
         reluLayer('Name', 'relu_fc1')
-        dropoutLayer(0.35, 'Name', 'head_drop1')
-        fullyConnectedLayer(256, 'Name', 'fc2')
+        dropoutLayer(0.3, 'Name', 'head_drop1')
+        fullyConnectedLayer(384, 'Name', 'fc2')
         reluLayer('Name', 'relu_fc2')
-        dropoutLayer(0.35, 'Name', 'head_drop2')
+        dropoutLayer(0.3, 'Name', 'head_drop2')
+        fullyConnectedLayer(256, 'Name', 'fc3')
+        reluLayer('Name', 'relu_fc3')
+        dropoutLayer(0.3, 'Name', 'head_drop3')
         fullyConnectedLayer(numClasses, 'Name', 'fc_final')
         softmaxLayer('Name', 'softmax')
         LabelSmoothingClassificationLayer(0.1, 'output')
