@@ -281,15 +281,15 @@ for k = kValues
         Tlen = size(Xi,2);
         
         % Temporal mask (stronger)
-        if rand < 0.4 && Tlen > 24
-            mlen = randi([8,20]);
+        if rand < 0.5 && Tlen > 24
+            mlen = randi([10,25]);
             t0 = randi([1, max(1, Tlen-mlen+1)]);
             Xi(:, t0:min(Tlen, t0+mlen-1)) = 0;
         end
         
-        % Time shift augmentation (±5% of sequence length)
-        if rand < 0.5
-            shiftAmount = round((rand - 0.5) * 0.1 * Tlen);
+        % Time shift augmentation (±8% of sequence length)
+        if rand < 0.6
+            shiftAmount = round((rand - 0.5) * 0.16 * Tlen);
             if shiftAmount > 0
                 Xi = [zeros(4, shiftAmount), Xi(:, 1:end-shiftAmount)];
             else
@@ -298,22 +298,28 @@ for k = kValues
         end
         
         % Phase jitter (stronger)
-        if rand < 0.5
-            theta = (pi/180) * (randn*6);
+        if rand < 0.6
+            theta = (pi/180) * (randn*8);
             R = [cos(theta) -sin(theta); sin(theta) cos(theta)];
             Xi(1:2,:) = R * Xi(1:2,:);
         end
         
         % Gain perturbation (stronger)
-        if rand < 0.5
-            g = 10^(randn*0.025);
+        if rand < 0.6
+            g = 10^(randn*0.03);
             Xi(1:3,:) = Xi(1:3,:) * g;
         end
         
-        % Light additive noise
-        if rand < 0.3
-            noiseLevel = 0.02;
+        % Additive noise (stronger)
+        if rand < 0.4
+            noiseLevel = 0.03;
             Xi = Xi + noiseLevel * randn(size(Xi));
+        end
+        
+        % Frequency shift simulation
+        if rand < 0.3
+            freqShift = (rand - 0.5) * 0.1;
+            Xi(1:2,:) = Xi(1:2,:) * exp(1j * freqShift * (1:Tlen));
         end
         
         XTrain{i} = Xi;
@@ -345,8 +351,10 @@ for k = kValues
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc1');
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc2');
 
-    % Enhanced attention block
+    % Multiple enhanced attention blocks
     [lgraph, lastName] = addEnhancedAttentionBlock(lgraph, lastName, embedDim, 'attn1');
+    [lgraph, lastName] = addEnhancedAttentionBlock(lgraph, lastName, embedDim, 'attn2');
+    [lgraph, lastName] = addEnhancedAttentionBlock(lgraph, lastName, embedDim, 'attn3');
 
     % BiLSTM stack
     [lgraph, lastName] = addBiLSTMStack(lgraph, lastName);
@@ -358,17 +366,17 @@ for k = kValues
     miniBatchSize = 96;  % Increased batch size
     iterPerEpoch = max(1, floor(numTrain/miniBatchSize));
     options = trainingOptions('adam', ...
-        'MaxEpochs', 60, ...  % Increased epochs for convergence
+        'MaxEpochs', 80, ...  % Increased epochs for convergence
         'ValidationData', {XVal, yVal}, ...
         'ValidationFrequency', max(1,ceil(iterPerEpoch/2)), ...
         'Verbose', true, ...
-        'InitialLearnRate', 1e-3, ...  % Higher initial learning rate for faster convergence
+        'InitialLearnRate', 2e-3, ...  % Higher initial learning rate for faster convergence
         'LearnRateSchedule', 'piecewise', ...
-        'LearnRateDropFactor', 0.7, ...
-        'LearnRateDropPeriod', 8, ...
+        'LearnRateDropFactor', 0.8, ...
+        'LearnRateDropPeriod', 6, ...
         'MiniBatchSize', miniBatchSize, ...
         'Shuffle', 'every-epoch', ...
-        'L2Regularization', 1e-4, ...  % Reduced regularization for better fitting
+        'L2Regularization', 5e-5, ...  % Reduced regularization for better fitting
         'GradientThreshold', 1, ...
         'Plots', ternary(showTrainingPlot,'training-progress','none'), ...
         'OutputNetwork', 'last-iteration', ...  % Use final epoch weights; we will also report best during training
@@ -703,24 +711,29 @@ function [lgraph, outName] = addEnhancedAttentionBlock(lgraph, inName, embedDim,
 end
 
 function [lgraph, outName] = addBiLSTMStack(lgraph, inName)
-% Two-layer BiLSTM stack for temporal modeling
+% Three-layer BiLSTM stack for temporal modeling
     rnn = [
-        bilstmLayer(256, 'OutputMode', 'sequence', 'Name', 'bilstm1')
-        dropoutLayer(0.35, 'Name', 'rnn_drop1')
-        bilstmLayer(192, 'OutputMode', 'last', 'Name', 'bilstm2')
-        dropoutLayer(0.35, 'Name', 'rnn_drop2')
+        bilstmLayer(320, 'OutputMode', 'sequence', 'Name', 'bilstm1')
+        dropoutLayer(0.3, 'Name', 'rnn_drop1')
+        bilstmLayer(256, 'OutputMode', 'sequence', 'Name', 'bilstm2')
+        dropoutLayer(0.3, 'Name', 'rnn_drop2')
+        bilstmLayer(192, 'OutputMode', 'last', 'Name', 'bilstm3')
+        dropoutLayer(0.3, 'Name', 'rnn_drop3')
     ];
     lgraph = addLayers(lgraph, rnn);
     lgraph = connectLayers(lgraph, inName, 'bilstm1');
-    outName = 'rnn_drop2';
+    outName = 'rnn_drop3';
 end
 
 function [lgraph, outName] = addClassifierHead(lgraph, inName, numClasses, classNames, classWeights)
 % Dense head with class weights for imbalance mitigation
     head = [
-        fullyConnectedLayer(256, 'Name', 'fc1')
+        fullyConnectedLayer(384, 'Name', 'fc1')
         reluLayer('Name', 'relu_fc1')
-        dropoutLayer(0.4, 'Name', 'head_drop')
+        dropoutLayer(0.35, 'Name', 'head_drop1')
+        fullyConnectedLayer(256, 'Name', 'fc2')
+        reluLayer('Name', 'relu_fc2')
+        dropoutLayer(0.35, 'Name', 'head_drop2')
         fullyConnectedLayer(numClasses, 'Name', 'fc_final')
         softmaxLayer('Name', 'softmax')
         LabelSmoothingClassificationLayer(0.1, 'output')
