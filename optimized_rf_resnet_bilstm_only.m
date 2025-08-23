@@ -345,8 +345,8 @@ for k = kValues
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc1');
     [lgraph, lastName] = addInceptionDilated1D(lgraph, lastName, embedDim, 'inc2');
 
-    % Transformer encoder block
-    [lgraph, lastName] = addTransformerEncoderBlock(lgraph, lastName, embedDim, 'trans1');
+    % Enhanced attention block
+    [lgraph, lastName] = addEnhancedAttentionBlock(lgraph, lastName, embedDim, 'attn1');
 
     % BiLSTM stack
     [lgraph, lastName] = addBiLSTMStack(lgraph, lastName);
@@ -685,55 +685,31 @@ function [lgraph, outName] = addInceptionDilated1D(lgraph, inName, outChannels, 
     outName = [blockId '_out'];
 end
 
-function [lgraph, outName] = addTransformerEncoderBlock(lgraph, inName, embedDim, id)
-% Simplified enhanced attention block with temporal convolution and FFN
-    % Pre-norm
-    pre_norm = layerNormalizationLayer('Name', ['pre_norm_' id]);
-    
-    % Temporal attention with large kernel convolution
-    attn_conv = convolution1dLayer(9, embedDim, 'Padding', 'same', 'Name', ['attn_conv_' id]);
+function [lgraph, outName] = addEnhancedAttentionBlock(lgraph, inName, embedDim, id)
+% Enhanced attention block with temporal convolution and residual connection
+    % Large kernel temporal convolution for attention
+    attn_conv = convolution1dLayer(11, embedDim, 'Padding', 'same', 'Name', ['attn_conv_' id]);
     attn_bn = batchNormalizationLayer('Name', ['attn_bn_' id]);
     attn_relu = reluLayer('Name', ['attn_relu_' id]);
-    attn_drop = dropoutLayer(0.1, 'Name', ['attn_drop_' id]);
+    attn_drop = dropoutLayer(0.15, 'Name', ['attn_drop_' id]);
+    
+    % Residual connection
     attn_add = additionLayer(2, 'Name', ['attn_add_' id]);
     
-    % Post-attention norm
-    post_norm = layerNormalizationLayer('Name', ['post_norm_' id]);
+    % Add layers
+    lgraph = addLayers(lgraph, [attn_conv; attn_bn; attn_relu; attn_drop; attn_add]);
     
-    % Feed-forward network
-    ffn1 = fullyConnectedLayer(embedDim * 4, 'Name', ['ffn1_' id]);
-    ffn_relu = reluLayer('Name', ['ffn_relu_' id]);
-    ffn2 = fullyConnectedLayer(embedDim, 'Name', ['ffn2_' id]);
-    ffn_drop = dropoutLayer(0.1, 'Name', ['ffn_drop_' id]);
-    ffn_add = additionLayer(2, 'Name', ['ffn_add_' id]);
-    
-    % Add all layers in sequence
-    lgraph = addLayers(lgraph, [pre_norm; attn_conv; attn_bn; attn_relu; attn_drop; attn_add;
-                                post_norm; ffn1; ffn_relu; ffn2; ffn_drop; ffn_add]);
-    
-    % Connect attention path
-    lgraph = connectLayers(lgraph, inName, ['pre_norm_' id]);
-    lgraph = connectLayers(lgraph, ['pre_norm_' id], ['attn_conv_' id]);
+    % Connect layers
+    lgraph = connectLayers(lgraph, inName, ['attn_conv_' id]);
     lgraph = connectLayers(lgraph, ['attn_conv_' id], ['attn_bn_' id]);
     lgraph = connectLayers(lgraph, ['attn_bn_' id], ['attn_relu_' id]);
     lgraph = connectLayers(lgraph, ['attn_relu_' id], ['attn_drop_' id]);
     
-    % Connect attention residual
+    % Connect residual
     lgraph = connectLayers(lgraph, inName, ['attn_add_' id '/in1']);
     lgraph = connectLayers(lgraph, ['attn_drop_' id], ['attn_add_' id '/in2']);
     
-    % Connect FFN path
-    lgraph = connectLayers(lgraph, ['attn_add_' id], ['post_norm_' id]);
-    lgraph = connectLayers(lgraph, ['post_norm_' id], ['ffn1_' id]);
-    lgraph = connectLayers(lgraph, ['ffn1_' id], ['ffn_relu_' id]);
-    lgraph = connectLayers(lgraph, ['ffn_relu_' id], ['ffn2_' id]);
-    lgraph = connectLayers(lgraph, ['ffn2_' id], ['ffn_drop_' id]);
-    
-    % Connect FFN residual
-    lgraph = connectLayers(lgraph, ['attn_add_' id], ['ffn_add_' id '/in1']);
-    lgraph = connectLayers(lgraph, ['ffn_drop_' id], ['ffn_add_' id '/in2']);
-    
-    outName = ['ffn_add_' id];
+    outName = ['attn_add_' id];
 end
 
 function [lgraph, outName] = addBiLSTMStack(lgraph, inName)
