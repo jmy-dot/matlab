@@ -27,7 +27,7 @@ useLegacyImpairments = false; % true to use comm.PhaseNoise/PhaseFrequencyOffset
 useLegacyAlpha = false;       % true to use legacy alpha sampler (mu=1.5, [1.2,2.8])
 
 % Ensure custom layer classes are accessible on path
-if exist('TemporalSelfAttentionLayer','class') ~= 8 || exist('LabelSmoothingClassificationLayer','class') ~= 8
+if exist('TemporalSelfAttentionLayer','class') ~= 8 || exist('LabelSmoothingClassificationLayer','class') ~= 8 || exist('FourierDenoiseLayer','class') ~= 8
     try
         addpath(fileparts(mfilename('fullpath')));
         rehash;
@@ -311,7 +311,7 @@ for k = kValues
     [lgraph, inputName] = addInputLayer1D(lgraph, inputFeatureSize);
 
     % Optional denoise block for low SNR prior to stem
-    [lgraph, lastName] = addDenoiseBlock1D(lgraph, inputName);
+    [lgraph, lastName] = addFourierDenoiseBlock1D(lgraph, inputName);
     % Initial 1D Conv stem
     [lgraph, lastName] = addStem1D(lgraph, lastName);
 
@@ -456,30 +456,55 @@ function [lgraph, inputName] = addInputLayer1D(lgraph, inputFeatureSize)
     lgraph = addLayers(lgraph, inLayer);
 end
 
-function [lgraph, outName] = addDenoiseBlock1D(lgraph, inName)
-% Denoise block: lightweight temporal smoothing + learnable enhancement
-    blk = [
-        averagePooling1dLayer(3, 'Stride',1, 'Padding','same', 'Name','denoise_avg')
-        convolution1dLayer(3, 8, 'Padding','same','Stride',1,'Name','denoise_conv')
-        batchNormalizationLayer('Name','denoise_bn')
-        reluLayer('Name','denoise_relu')
+function [lgraph, outName] = addFourierDenoiseBlock1D(lgraph, inName)
+% Fourier domain denoising block for low SNR signals
+    % Real FFT-based denoising with learnable parameters
+    denoise_block = [
+        % Stage 1: Real FFT denoising layer
+        FourierDenoiseLayer('fourier_denoise')
+        
+        % Stage 2: Post-processing refinement
+        convolution1dLayer(5, 16, 'Padding', 'same', 'Name', 'denoise_conv1')
+        batchNormalizationLayer('Name', 'denoise_bn1')
+        reluLayer('Name', 'denoise_relu1')
+        
+        % Stage 3: Final refinement
+        convolution1dLayer(3, 8, 'Padding', 'same', 'Name', 'denoise_conv2')
+        batchNormalizationLayer('Name', 'denoise_bn2')
+        reluLayer('Name', 'denoise_relu2')
     ];
-    % 1x1 conv to match channels for residual connection
-    matchConv = [
-        convolution1dLayer(1, 8, 'Padding','same','Stride',1,'Name','denoise_match')
-        batchNormalizationLayer('Name','denoise_match_bn')
+    
+    % Match input channels to output channels
+    match_block = [
+        convolution1dLayer(1, 8, 'Padding', 'same', 'Name', 'denoise_match')
+        batchNormalizationLayer('Name', 'denoise_match_bn')
     ];
-    addName = 'denoise_add';
-    outRelu = reluLayer('Name','denoise_out');
-    lgraph = addLayers(lgraph, blk);
-    lgraph = addLayers(lgraph, matchConv);
-    lgraph = addLayers(lgraph, additionLayer(2,'Name',addName));
-    lgraph = addLayers(lgraph, outRelu);
-    lgraph = connectLayers(lgraph, inName, 'denoise_avg');
-    lgraph = connectLayers(lgraph, 'denoise_relu', [addName '/in1']);
+    
+    % Residual addition
+    add_layer = additionLayer(2, 'Name', 'denoise_add');
+    out_relu = reluLayer('Name', 'denoise_out');
+    
+    % Add all layers
+    lgraph = addLayers(lgraph, [denoise_block; match_block; add_layer; out_relu]);
+    
+    % Connect denoising path
+    lgraph = connectLayers(lgraph, inName, 'fourier_denoise');
+    lgraph = connectLayers(lgraph, 'fourier_denoise', 'denoise_conv1');
+    lgraph = connectLayers(lgraph, 'denoise_conv1', 'denoise_bn1');
+    lgraph = connectLayers(lgraph, 'denoise_bn1', 'denoise_relu1');
+    lgraph = connectLayers(lgraph, 'denoise_relu1', 'denoise_conv2');
+    lgraph = connectLayers(lgraph, 'denoise_conv2', 'denoise_bn2');
+    lgraph = connectLayers(lgraph, 'denoise_bn2', 'denoise_relu2');
+    
+    % Connect residual path
     lgraph = connectLayers(lgraph, inName, 'denoise_match');
-    lgraph = connectLayers(lgraph, 'denoise_match_bn', [addName '/in2']);
-    lgraph = connectLayers(lgraph, addName, 'denoise_out');
+    lgraph = connectLayers(lgraph, 'denoise_match', 'denoise_match_bn');
+    
+    % Connect residual addition
+    lgraph = connectLayers(lgraph, 'denoise_relu2', 'denoise_add/in1');
+    lgraph = connectLayers(lgraph, 'denoise_match_bn', 'denoise_add/in2');
+    lgraph = connectLayers(lgraph, 'denoise_add', 'denoise_out');
+    
     outName = 'denoise_out';
 end
 
