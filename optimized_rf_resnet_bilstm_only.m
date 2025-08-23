@@ -275,10 +275,40 @@ for k = kValues
         XTest{i} = Xi.';
     end
 
-    % Fast augmentation for low SNR robustness
+    % Fast augmentation with Fourier denoising for low SNR robustness
     for i = 1:numTrain
         Xi = XTrain{i}; % [4 x T]
         Tlen = size(Xi,2);
+        
+        % Apply Fourier domain denoising for low SNR robustness
+        if rand < 0.4  % 40% probability to apply denoising
+            for ch = 1:4
+                % Extract channel data
+                x = Xi(ch, :);
+                
+                % Apply FFT
+                X_fft = fft(x);
+                magnitude = abs(X_fft);
+                
+                % Adaptive noise threshold (based on spectrum)
+                sorted_mag = sort(magnitude, 'descend');
+                noise_threshold = sorted_mag(round(0.25 * length(sorted_mag))) * 0.15;
+                
+                % Create frequency mask for denoising
+                mask = ones(size(magnitude));
+                weak_indices = magnitude < noise_threshold;
+                mask(weak_indices) = 0.6;  % Attenuate weak components
+                
+                % Apply mask to frequency domain
+                X_fft_denoised = X_fft .* mask;
+                
+                % Apply IFFT to get denoised signal
+                x_denoised = real(ifft(X_fft_denoised));
+                
+                % Store denoised result
+                Xi(ch, :) = x_denoised;
+            end
+        end
         
         % Adaptive noise injection for low SNR robustness
         if rand < 0.25
@@ -311,7 +341,7 @@ for k = kValues
     [lgraph, inputName] = addInputLayer1D(lgraph, inputFeatureSize);
 
     % Optional denoise block for low SNR prior to stem
-    [lgraph, lastName] = addFourierDenoiseBlock1D(lgraph, inputName);
+    [lgraph, lastName] = addEnhancedDenoiseBlock1D(lgraph, inputName);
     % Initial 1D Conv stem
     [lgraph, lastName] = addStem1D(lgraph, lastName);
 
@@ -456,29 +486,35 @@ function [lgraph, inputName] = addInputLayer1D(lgraph, inputFeatureSize)
     lgraph = addLayers(lgraph, inLayer);
 end
 
-function [lgraph, outName] = addFourierDenoiseBlock1D(lgraph, inName)
-% Fourier domain denoising block for low SNR signals
-    % Simple FFT-based denoising with post-processing
+function [lgraph, outName] = addEnhancedDenoiseBlock1D(lgraph, inName)
+% Enhanced denoising block for low SNR signals
+    % Multi-scale temporal filtering for noise reduction
     denoise_block = [
-        % Stage 1: Real FFT denoising layer
-        FourierDenoiseLayer('fourier_denoise')
+        % Stage 1: Large kernel temporal smoothing
+        averagePooling1dLayer(5, 'Stride', 1, 'Padding', 'same', 'Name', 'denoise_pool')
+        convolution1dLayer(7, 16, 'Padding', 'same', 'Name', 'denoise_conv1')
+        batchNormalizationLayer('Name', 'denoise_bn1')
+        reluLayer('Name', 'denoise_relu1')
         
-        % Stage 2: Post-processing refinement
-        convolution1dLayer(5, 8, 'Padding', 'same', 'Name', 'denoise_conv')
-        batchNormalizationLayer('Name', 'denoise_bn')
-        reluLayer('Name', 'denoise_relu')
+        % Stage 2: Multi-scale feature extraction
+        convolution1dLayer(5, 8, 'Padding', 'same', 'Name', 'denoise_conv2')
+        batchNormalizationLayer('Name', 'denoise_bn2')
+        reluLayer('Name', 'denoise_relu2')
     ];
     
     % Add layers as a sequence
     lgraph = addLayers(lgraph, denoise_block);
     
     % Connect layers
-    lgraph = connectLayers(lgraph, inName, 'fourier_denoise');
-    lgraph = connectLayers(lgraph, 'fourier_denoise', 'denoise_conv');
-    lgraph = connectLayers(lgraph, 'denoise_conv', 'denoise_bn');
-    lgraph = connectLayers(lgraph, 'denoise_bn', 'denoise_relu');
+    lgraph = connectLayers(lgraph, inName, 'denoise_pool');
+    lgraph = connectLayers(lgraph, 'denoise_pool', 'denoise_conv1');
+    lgraph = connectLayers(lgraph, 'denoise_conv1', 'denoise_bn1');
+    lgraph = connectLayers(lgraph, 'denoise_bn1', 'denoise_relu1');
+    lgraph = connectLayers(lgraph, 'denoise_relu1', 'denoise_conv2');
+    lgraph = connectLayers(lgraph, 'denoise_conv2', 'denoise_bn2');
+    lgraph = connectLayers(lgraph, 'denoise_bn2', 'denoise_relu2');
     
-    outName = 'denoise_relu';
+    outName = 'denoise_relu2';
 end
 
 function [lgraph, outName] = addStem1D(lgraph, inputName)
