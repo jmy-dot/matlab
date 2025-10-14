@@ -279,11 +279,16 @@ for k = kValues
     xTrainingFrames = reshape(xTrainingFrames, [frameLength, 2, numTrain]);
     xValFrames = reshape(xValFrames, [frameLength, 2, numVal]);
     xTestFrames = reshape(xTestFrames, [frameLength, 2, numTest]);
+    
+    % 添加第4维以满足imageInputLayer的要求
+    xTrainingFrames = reshape(xTrainingFrames, [frameLength, 2, 1, numTrain]);
+    xValFrames = reshape(xValFrames, [frameLength, 2, 1, numVal]);
+    xTestFrames = reshape(xTestFrames, [frameLength, 2, 1, numTest]);
 
     % Shuffle training set
     %打乱训练集（避免模型学习顺序依赖）
     vr = randperm(numTrain);
-    xTrainingFrames = xTrainingFrames(:,:,vr);
+    xTrainingFrames = xTrainingFrames(:,:,:,vr);
     yTrain = yTrain(vr);
 
     %%
@@ -317,13 +322,13 @@ for k = kValues
     %为了严格遵守机器学习的准则，防止数据泄露。在真实场景中，我们永远无法提前知道未来测试数据的分布，
     %所以模型的任何预处理步骤都只能基于已有的训练数据。验证集和测试集必须被当作模拟的未来数据来处理。
     for i = 1:numTrain
-        xTrainingFrames(:,:,i) = (xTrainingFrames(:,:,i) - globalMu) ./ globalSigma;
+        xTrainingFrames(:,:,1,i) = (xTrainingFrames(:,:,1,i) - globalMu) ./ globalSigma;
     end
     for i = 1:numVal
-        xValFrames(:,:,i) = (xValFrames(:,:,i) - globalMu) ./ globalSigma;
+        xValFrames(:,:,1,i) = (xValFrames(:,:,1,i) - globalMu) ./ globalSigma;
     end
     for i = 1:numTest
-        xTestFrames(:,:,i) = (xTestFrames(:,:,i) - globalMu) ./ globalSigma;
+        xTestFrames(:,:,1,i) = (xTestFrames(:,:,1,i) - globalMu) ./ globalSigma;
     end
 
     %% Build LSTM model
@@ -484,7 +489,7 @@ fprintf('最终版 t-SNE 可视化结果已保存为 EMF 矢量图: %s\n', tsneF
     accuracies = zeros(numTests,1);
     for i = 1:numTests
         idx = randperm(numel(yTest));
-        xTestShuffled = xTestFrames(:,:,idx);
+        xTestShuffled = xTestFrames(:,:,:,idx);
         yTestShuffled = yTest(idx);
         yTestPred = classify(bestNet, xTestShuffled, 'ExecutionEnvironment', 'auto');
         accuracies(i) = mean(yTestShuffled == yTestPred);
